@@ -1,6 +1,7 @@
 from typing import TypedDict
 from langgraph.graph import StateGraph, START, END
 from data_connector import mcp_store
+from layer2_routing_agent import IntelligentRouter
 import logging
 
 logger = logging.getLogger(__name__)
@@ -10,6 +11,7 @@ class AgentState(TypedDict):
     query: str
     intent: str
     entities: dict
+    routing_reasoning: str
     analysis_result: dict
     forecast_result: dict
     anomaly_result: dict
@@ -17,7 +19,7 @@ class AgentState(TypedDict):
     final_response: str
 
 class AgentOrchestrator:
-    """Layer 2: Orchestrates agent execution based on query intent"""
+    """Layer 2: Orchestrates agent execution using LLM-based intelligent routing"""
     
     def __init__(self):
         # Import and initialize all specialized agents
@@ -31,14 +33,17 @@ class AgentOrchestrator:
         self.anomaly_agent = AnomalyDetectionAgent()
         self.explanation_agent = ExplanationAgent()
         
+        # NEW: Initialize intelligent router
+        self.router = IntelligentRouter()
+        
         self.workflow = self._build_workflow()
     
     def _build_workflow(self) -> StateGraph:
-        """Build LangGraph workflow with conditional routing"""
+        """Build LangGraph workflow with LLM-based routing"""
         workflow = StateGraph(AgentState)
         
-        # Add nodes (each node is a step in the workflow)
-        workflow.add_node("route_query", self._route_query)
+        # Add nodes
+        workflow.add_node("route_query", self._route_query_with_llm)
         workflow.add_node("analyze", self._analyze_node)
         workflow.add_node("forecast", self._forecast_node)
         workflow.add_node("detect_anomalies", self._detect_anomalies_node)
@@ -47,15 +52,14 @@ class AgentOrchestrator:
         # Define workflow edges
         workflow.add_edge(START, "route_query")
         
-        # Conditional routing based on intent
+        # Conditional routing based on LLM decision
         workflow.add_conditional_edges(
             "route_query",
             self._route_to_agents,
             {
                 "analysis": "analyze",
                 "forecast": "forecast",
-                "anomaly": "detect_anomalies",
-                "summary": "analyze"
+                "anomaly": "detect_anomalies"
             }
         )
         
@@ -67,36 +71,30 @@ class AgentOrchestrator:
         
         return workflow.compile()
     
-    def _route_query(self, state: AgentState) -> AgentState:
+    def _route_query_with_llm(self, state: AgentState) -> AgentState:
         """
-        Classify user intent and extract entities.
-        This determines which agent(s) to activate.
+        Use LLM to intelligently classify intent and extract entities.
+        This replaces manual keyword matching with AI reasoning.
         """
-        query = state["query"].lower()
+        query = state["query"]
         
-        # Intent classification logic
-        if any(word in query for word in ["forecast", "predict", "future", "next"]):
-            intent = "forecast"
-        elif any(word in query for word in ["anomaly", "unusual", "outlier", "strange", "detect"]):
-            intent = "anomaly"
-        elif any(word in query for word in ["total", "sum", "how much", "revenue"]):
-            intent = "analysis"
-        elif any(word in query for word in ["trend", "growth", "change"]):
-            intent = "analysis"
-        else:
-            intent = "summary"
+        # Get conversation context from mcp_store
+        conversation_context = mcp_store.conversation_history[-5:] if hasattr(mcp_store, 'conversation_history') else []
         
-        # Entity extraction (extract year, month, etc.)
-        import re
-        entities = {}
-        year_match = re.search(r'20\d{2}', query)
-        if year_match:
-            entities['year'] = int(year_match.group())
+        # Use LLM router to make intelligent decision
+        routing_decision = self.router.route_query(query, conversation_context)
         
-        state["intent"] = intent
-        state["entities"] = entities
+        # Update state with LLM's decision
+        state["intent"] = routing_decision["intent"]
+        state["entities"] = routing_decision.get("entities", {})
+        state["routing_reasoning"] = routing_decision.get("reasoning", "")
         
-        logger.info(f"Query routed with intent: {intent}, entities: {entities}")
+        logger.info(f"LLM Routing Decision:")
+        logger.info(f"  Intent: {state['intent']}")
+        logger.info(f"  Entities: {state['entities']}")
+        logger.info(f"  Reasoning: {state['routing_reasoning']}")
+        logger.info(f"  Confidence: {routing_decision.get('confidence', 'N/A')}")
+        
         return state
     
     def _route_to_agents(self, state: AgentState) -> str:
@@ -104,36 +102,38 @@ class AgentOrchestrator:
         return state["intent"]
     
     # ============== AGENT NODE FUNCTIONS ==============
-    # These functions are REQUIRED - they're the bridge between
-    # LangGraph orchestration and your actual agent classes
     
     def _analyze_node(self, state: AgentState) -> AgentState:
-        """
-        Execute Analysis Agent.
-        This node function calls the actual AnalysisAgent class.
-        """
+        """Execute Analysis Agent with entities from LLM"""
         analysis_type = "aggregation" if "total" in state["query"].lower() else "summary"
-        result = self.analysis_agent.execute(state["query"], analysis_type)
+        
+        # Pass entities extracted by LLM
+        result = self.analysis_agent.execute(
+            state["query"], 
+            analysis_type,
+            entities=state.get("entities", {})
+        )
+        
         state["analysis_result"] = result
         logger.info(f"Analysis completed: {result.get('status')}")
         return state
     
     def _forecast_node(self, state: AgentState) -> AgentState:
-        """
-        Execute Forecasting Agent.
-        This node function calls the actual ForecastingAgent class.
-        """
-        result = self.forecast_agent.execute(state["query"])
+        """Execute Forecasting Agent"""
+        # Extract forecast periods from entities if provided
+        periods = state.get("entities", {}).get("periods", 3)
+        
+        result = self.forecast_agent.execute(state["query"], forecast_periods=periods)
         state["forecast_result"] = result
         logger.info(f"Forecasting completed: {result.get('status')}")
         return state
     
     def _detect_anomalies_node(self, state: AgentState) -> AgentState:
-        """
-        Execute Anomaly Detection Agent.
-        This node function calls the actual AnomalyDetectionAgent class.
-        """
-        result = self.anomaly_agent.execute(state["query"])
+        """Execute Anomaly Detection Agent"""
+        # Extract threshold from entities if provided
+        contamination = state.get("entities", {}).get("contamination", 0.05)
+        
+        result = self.anomaly_agent.execute(state["query"], contamination=contamination)
         state["anomaly_result"] = result
         logger.info(f"Anomaly detection completed: {result.get('status')}")
         return state
@@ -141,36 +141,37 @@ class AgentOrchestrator:
     # ============== RESULT AGGREGATION ==============
     
     def _aggregate_results(self, state: AgentState) -> AgentState:
-        """
-        Aggregate results from all executed agents and generate explanation.
-        This is where context from multiple agents gets combined.
-        """
+        """Aggregate results from all executed agents"""
         final_response = []
+        
+        # Add routing reasoning at the top (optional, for transparency)
+        if state.get("routing_reasoning"):
+            final_response.append(f"_🤖 Routing: {state['routing_reasoning']}_\n")
         
         # Process Analysis Results
         if state.get("analysis_result"):
             results = state["analysis_result"].get("results", {})
             if isinstance(results, dict):
                 if "total_sales" in results:
-                    final_response.append(f"💰 **Total Sales:** ${results['total_sales']:,.2f}")
+                    final_response.append(f"💰 **Total Sales:** ${results['total_sales']:,.2f}\n")
                 if "total_orders" in results:
-                    final_response.append(f"📦 **Total Orders:** {results['total_orders']:,}")
+                    final_response.append(f"📦 **Total Orders:** {results['total_orders']:,}\n")
                 if "avg_order_value" in results:
-                    final_response.append(f"📊 **Average Order Value:** ${results['avg_order_value']:,.2f}")
+                    final_response.append(f"📊 **Average Order Value:** ${results['avg_order_value']:,.2f}\n")
                 if "unique_customers" in results:
-                    final_response.append(f"👥 **Unique Customers:** {results['unique_customers']:,}")
+                    final_response.append(f"👥 **Unique Customers:** {results['unique_customers']:,}\n")
                 if "unique_products" in results:
-                    final_response.append(f"🏷️ **Unique Products:** {results['unique_products']:,}")
+                    final_response.append(f"🏷️ **Unique Products:** {results['unique_products']:,}\n")
         
         # Process Forecast Results
         if state.get("forecast_result"):
             forecasts = state["forecast_result"].get("forecasts", [])
             if forecasts:
-                final_response.append(f"\n🔮 **Forecast for next {len(forecasts)} periods:**")
+                final_response.append(f"\n🔮 **Forecast for next {len(forecasts)} periods:**\n")
                 for f in forecasts:
                     final_response.append(
                         f"  • **{f['date']}:** ${f['forecasted_sales']:,.2f} "
-                        f"(confidence: {f.get('confidence', 'N/A')})"
+                        f"(confidence: {f.get('confidence', 'N/A')})\n"
                     )
                 
                 trend = state["forecast_result"].get("historical_trend")
@@ -178,28 +179,28 @@ class AgentOrchestrator:
                     trend_direction = "📈 upward" if trend > 0 else "📉 downward"
                     final_response.append(
                         f"\n**Historical Trend:** {trend_direction} trend "
-                        f"(${abs(trend):,.2f}/month)"
+                        f"(${abs(trend):,.2f}/month)\n"
                     )
         
         # Process Anomaly Results
         if state.get("anomaly_result"):
             anomalies = state["anomaly_result"].get("anomalies", {})
             if anomalies:
-                final_response.append(f"\n⚠️ **Anomalies Detected:**")
-                final_response.append(f"  • Total Anomalies: {anomalies.get('total_anomalies', 0):,}")
-                final_response.append(f"  • Percentage: {anomalies.get('percentage', 0):.2f}%")
-                final_response.append(f"  • Anomalous Sales Total: ${anomalies.get('anomaly_sales_total', 0):,.2f}")
+                final_response.append(f"\n⚠️ **Anomalies Detected:**\n")
+                final_response.append(f"  • Total Anomalies: {anomalies.get('total_anomalies', 0):,}\n")
+                final_response.append(f"  • Percentage: {anomalies.get('percentage', 0):.2f}%\n")
+                final_response.append(f"  • Anomalous Sales Total: ${anomalies.get('anomaly_sales_total', 0):,.2f}\n")
                 
                 top_anomalies = anomalies.get('top_anomalies', [])
                 if top_anomalies:
-                    final_response.append(f"\n  **Top Anomalous Orders:**")
+                    final_response.append(f"\n  **Top Anomalous Orders:**\n")
                     for anom in top_anomalies[:3]:
                         final_response.append(
                             f"    • Order **{anom.get('SalesDocument')}**: "
-                            f"${anom.get('NetAmount', 0):,.2f}"
+                            f"${anom.get('NetAmount', 0):,.2f}\n"
                         )
         
-        # Generate AI Explanation using ExplanationAgent
+        # Generate AI Explanation
         try:
             explanation_result = self.explanation_agent.execute(
                 state["query"],
@@ -213,28 +214,24 @@ class AgentOrchestrator:
             if explanation_result.get("status") == "success":
                 explanation = explanation_result.get("explanation", "")
                 if explanation:
-                    final_response.append(f"\n\n💡 **AI Insights:**\n{explanation}")
+                    final_response.append(f"\n---\n\n💡 **AI Insights:**\n\n{explanation}")
                     state["explanation"] = explanation
                     logger.info("AI explanation generated successfully")
         
         except Exception as e:
             logger.error(f"Error generating explanation: {str(e)}")
-            # Continue without explanation - don't fail the whole query
         
         # Finalize response
-        state["final_response"] = "\n".join(final_response) if final_response else "No results available"
+        state["final_response"] = "".join(final_response) if final_response else "No results available"
         return state
     
     # ============== MAIN ENTRY POINT ==============
     
     def process_query(self, query: str) -> dict:
-        """
-        Main entry point for query processing.
-        Ensures data is loaded, executes workflow, returns results.
-        """
+        """Main entry point for query processing"""
         logger.info(f"Processing query: {query}")
         
-        # Ensure data is loaded in mcp_store
+        # Ensure data is loaded
         try:
             if mcp_store.sales_df is None:
                 logger.info("Data not loaded, loading now...")
@@ -252,6 +249,7 @@ class AgentOrchestrator:
             "query": query,
             "intent": "",
             "entities": {},
+            "routing_reasoning": "",
             "analysis_result": {},
             "forecast_result": {},
             "anomaly_result": {},
@@ -267,7 +265,8 @@ class AgentOrchestrator:
                 "query": query,
                 "intent": result["intent"],
                 "response": result["final_response"],
-                "explanation": result.get("explanation", "")
+                "explanation": result.get("explanation", ""),
+                "routing_reasoning": result.get("routing_reasoning", "")
             }
         
         except Exception as e:
