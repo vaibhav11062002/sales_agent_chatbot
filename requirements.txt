@@ -9,6 +9,7 @@ langgraph
 xgboost
 scikit-learn
 keras
+tenserflow
 pmdarima
 
 # MCP packages
