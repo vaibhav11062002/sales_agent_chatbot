@@ -234,7 +234,8 @@ class AgentOrchestrator:
         
         # Process Forecast Results
         if state.get("forecast_result"):
-            forecasts = state["forecast_result"].get("forecasts", [])
+            forecasts_result = state["forecast_result"]
+            forecasts = forecasts_result.get("forecasts", [])
             if forecasts:
                 final_response.append(f"\n🔮 **Forecast for next {len(forecasts)} periods:**\n")
                 for f in forecasts:
@@ -242,14 +243,24 @@ class AgentOrchestrator:
                         f"  • **{f.get('date', 'N/A')}:** ${f.get('forecasted_sales', 0):,.2f} "
                         f"(confidence: {f.get('confidence', 'N/A')})\n"
                     )
-                
-                trend = state["forecast_result"].get("historical_trend")
+                # Show model used, params, accuracy, and custom message:
+                final_response.append(f"\n**Model Used:** {forecasts_result.get('model_used', 'N/A')}\n")
+                if 'model_params' in forecasts_result:
+                    final_response.append(f"**Model Params:** {forecasts_result['model_params']}\n")
+                if 'accuracy' in forecasts_result and isinstance(forecasts_result["accuracy"], dict):
+                    acc = forecasts_result["accuracy"]
+                    acc_str = ", ".join(f"{k}={v:.2f}" for k, v in acc.items())
+                    final_response.append(f"**Accuracy:** {acc_str}\n")
+                if 'message' in forecasts_result:
+                    final_response.append(f"**Internal Message:** {forecasts_result['message']}\n")
+                trend = forecasts_result.get("historical_trend")
                 if trend:
                     trend_direction = "📈 upward" if trend > 0 else "📉 downward"
                     final_response.append(
                         f"\n**Historical Trend:** {trend_direction} trend "
                         f"(${abs(trend):,.2f}/month)\n"
                     )
+
         
         # Process Anomaly Results
         if state.get("anomaly_result"):

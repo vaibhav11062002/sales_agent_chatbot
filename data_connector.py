@@ -107,3 +107,4 @@ class MCPBackedDataStore:
 
 # Singleton
 mcp_store = MCPBackedDataStore()
+mcp_store.load_sales_data() 
