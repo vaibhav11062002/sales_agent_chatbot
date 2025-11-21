@@ -19,6 +19,7 @@ class IntelligentRouter:
     def __init__(self):
         self.name = "IntelligentRouter"
         self.model = genai.GenerativeModel('gemini-2.5-flash')
+        logger.info(f"✅ {self.name} initialized with model: gemini-2.0-flash-exp")
         
         # Define available agents as tools
         self.available_agents = {
@@ -106,77 +107,101 @@ class IntelligentRouter:
                 "confidence": 0.95
             }
         """
-        logger.info(f"{self.name}: Routing query: {query}")
+        logger.info(f"🔀 {self.name}: Starting routing for query: '{query}'")
+        logger.debug(f"📝 Conversation context available: {len(conversation_context) if conversation_context else 0} turns")
         
         try:
             # Build context-aware prompt
+            logger.debug("🏗️  Building routing prompt...")
             prompt = self._build_routing_prompt(query, conversation_context)
+            logger.debug(f"📤 Prompt length: {len(prompt)} characters")
             
             # Call Gemini for reasoning
+            logger.info("🤖 Calling Gemini LLM for routing decision...")
             response = self.model.generate_content(prompt)
             result_text = response.text
             
-            logger.info(f"Raw LLM response: {result_text[:200]}...")
+            logger.info(f"📥 LLM Response received (length: {len(result_text)} chars)")
+            logger.debug(f"📄 Raw LLM response:\n{result_text[:500]}...")
             
-            # Parse JSON response with multiple strategies
+            # Parse JSON response
+            logger.debug("🔍 Attempting to extract JSON from LLM response...")
             routing_decision = self._extract_json(result_text)
             
             if routing_decision is None:
-                logger.warning("Could not parse LLM response, using fallback")
+                logger.warning("⚠️  JSON extraction failed, using fallback routing")
                 return self._fallback_routing(query)
+            
+            logger.info("✅ JSON extracted successfully")
             
             # Validate intent
             if routing_decision.get("intent") not in self.available_agents:
-                logger.warning(f"Invalid intent: {routing_decision.get('intent')}, defaulting to analysis")
+                logger.warning(f"⚠️  Invalid intent: '{routing_decision.get('intent')}', defaulting to 'analysis'")
                 routing_decision["intent"] = "analysis"
             
-            logger.info(f"Routing decision: {routing_decision['intent']} (confidence: {routing_decision.get('confidence', 'N/A')})")
-            logger.info(f"Reasoning: {routing_decision.get('reasoning', 'N/A')}")
+            logger.info(f"🎯 ROUTING DECISION:")
+            logger.info(f"   └─ Intent: {routing_decision['intent']}")
+            logger.info(f"   └─ Entities: {routing_decision.get('entities', {})}")
+            logger.info(f"   └─ Confidence: {routing_decision.get('confidence', 'N/A')}")
+            logger.info(f"   └─ Reasoning: {routing_decision.get('reasoning', 'N/A')}")
             
             return routing_decision
         
         except Exception as e:
-            logger.error(f"Error in LLM routing: {str(e)}", exc_info=True)
+            logger.error(f"❌ Error in LLM routing: {str(e)}", exc_info=True)
+            logger.warning("⚠️  Falling back to keyword-based routing")
             return self._fallback_routing(query)
     
     def _extract_json(self, text: str) -> Dict[str, Any]:
         """Extract JSON from LLM response with multiple strategies"""
         
+        logger.debug("🔍 Strategy 1: Looking for JSON in markdown code blocks...")
         # Strategy 1: Try to find JSON in markdown code blocks
         code_block_pattern = r'``````'
         match = re.search(code_block_pattern, text, re.DOTALL)
         if match:
             try:
-                return json.loads(match.group(1))
-            except json.JSONDecodeError:
-                pass
+                result = json.loads(match.group(1))
+                logger.info("✅ Strategy 1 SUCCESS: Found JSON in code block")
+                return result
+            except json.JSONDecodeError as e:
+                logger.debug(f"❌ Strategy 1 FAILED: {str(e)}")
         
+        logger.debug("🔍 Strategy 2: Looking for raw JSON object...")
         # Strategy 2: Try to find raw JSON object
         json_pattern = r'\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}'
         matches = re.finditer(json_pattern, text, re.DOTALL)
         for match in matches:
             try:
-                return json.loads(match.group(0))
+                result = json.loads(match.group(0))
+                logger.info("✅ Strategy 2 SUCCESS: Found raw JSON object")
+                return result
             except json.JSONDecodeError:
                 continue
         
+        logger.debug("🔍 Strategy 3: Parsing entire response as JSON...")
         # Strategy 3: Try parsing entire response as JSON
         try:
-            return json.loads(text.strip())
+            result = json.loads(text.strip())
+            logger.info("✅ Strategy 3 SUCCESS: Entire response is valid JSON")
+            return result
         except json.JSONDecodeError:
-            pass
+            logger.debug("❌ Strategy 3 FAILED")
         
+        logger.debug("🔍 Strategy 4: Cleaning and parsing...")
         # Strategy 4: Try cleaning and parsing
         try:
             cleaned = text.strip()
             # Remove markdown code blocks (backticks)
             cleaned = re.sub(r'`{3}(?:json)?', '', cleaned)
             cleaned = cleaned.strip()
-            return json.loads(cleaned)
+            result = json.loads(cleaned)
+            logger.info("✅ Strategy 4 SUCCESS: Cleaned JSON parsed")
+            return result
         except json.JSONDecodeError:
-            pass
+            logger.debug("❌ Strategy 4 FAILED")
         
-        logger.error(f"All JSON extraction strategies failed. Raw text: {text}")
+        logger.error(f"❌ ALL JSON extraction strategies failed. Raw text: {text[:200]}...")
         return None
     
     def _build_routing_prompt(self, query: str, conversation_context: list = None) -> str:
@@ -217,7 +242,7 @@ IMPORTANT: Respond with ONLY a valid JSON object. Do not include any markdown, e
 Required JSON format:
 {{
     "intent": "analysis",
-    "entities": {{"year": 2024, "comparison": true, "years": }},
+    "entities": {{"year": 2024, "comparison": true, "years": [2024, 2025]}},
     "reasoning": "Brief explanation of why this agent was chosen",
     "confidence": 0.95
 }}
@@ -237,31 +262,39 @@ Respond ONLY with the JSON object, nothing else:"""
     
     def _fallback_routing(self, query: str) -> Dict[str, Any]:
         """Fallback to simple keyword matching if LLM fails"""
-        logger.info("Using fallback keyword-based routing")
+        logger.info("🔧 Using fallback keyword-based routing")
         
         query_lower = query.lower()
         
         # Simple keyword matching
         if any(word in query_lower for word in ["forecast", "predict", "future", "next"]):
             intent = "forecast"
+            logger.debug("   └─ Matched 'forecast' keywords")
         elif any(word in query_lower for word in ["anomaly", "unusual", "outlier", "strange", "detect"]):
             intent = "anomaly"
+            logger.debug("   └─ Matched 'anomaly' keywords")
         else:
             intent = "analysis"
+            logger.debug("   └─ Defaulted to 'analysis'")
         
         # Extract year
         entities = {}
         year_matches = re.findall(r'20\d{2}', query)
         if year_matches:
             if len(year_matches) == 1:
-                entities['year'] = int(year_matches)
+                entities['year'] = int(year_matches[0])
+                logger.debug(f"   └─ Extracted year: {entities['year']}")
             else:
                 entities['years'] = [int(y) for y in year_matches]
                 entities['comparison'] = True
+                logger.debug(f"   └─ Extracted comparison years: {entities['years']}")
         
-        return {
+        result = {
             "intent": intent,
             "entities": entities,
             "reasoning": "Fallback keyword matching used due to LLM parsing error",
             "confidence": 0.5
         }
+        
+        logger.info(f"🎯 FALLBACK ROUTING DECISION: {result}")
+        return result

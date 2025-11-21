@@ -17,7 +17,7 @@ DB_CONFIG = {
     "sslValidateCertificate": False
 }
 
-TABLE_NAME = "DSP_CUST_CONTENT.SAP_SALES_CUSTOMER"
+TABLE_NAME = "DSP_CUST_CONTENT.SALES_DATA_VIEW"
 
 @dataclass
 class GlobalState:
