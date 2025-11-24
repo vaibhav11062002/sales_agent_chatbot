@@ -11,6 +11,8 @@ scikit-learn
 keras
 tenserflow
 pmdarima
+pdfkit
+plotly
 
 # MCP packages
 fastmcp

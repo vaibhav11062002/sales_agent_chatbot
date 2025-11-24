@@ -1,232 +1,226 @@
 """
-MCP Context Manager - Checks if query can be answered from existing context
+Dynamic MCP Context Manager - Uses LLM for context resolution
 """
 import logging
-from typing import Dict, Any, Optional
+import os
+from typing import Dict, Any, Optional, List
 from data_connector import mcp_store
-import re
 
 logger = logging.getLogger(__name__)
 
 class ContextManager:
-    """Manages context retrieval and determines if new computation is needed"""
+    """Dynamic context manager using LLM for entity resolution and semantic matching"""
     
     def __init__(self):
         self.name = "ContextManager"
-        logger.info(f"✅ {self.name} initialized")
+        
+        # Initialize LLM for context resolution
+        try:
+            from langchain_google_genai import ChatGoogleGenerativeAI
+            self.llm = ChatGoogleGenerativeAI(
+                model="gemini-2.5-flash",
+                temperature=0,
+                api_key="AIzaSyBvGk-pDi2hqdq0CLSoKV2Sa8TH5IWShtE"
+            )
+            logger.info(f"✅ {self.name} initialized with LLM-powered context resolution")
+        except Exception as e:
+            logger.warning(f"⚠️ Could not initialize LLM: {e}")
+            self.llm = None
     
     def check_context_for_answer(self, query: str, entities: dict) -> Optional[Dict[str, Any]]:
         """
-        Check if query can be answered from existing MCP context
-        
-        Returns:
-            Answer dict if found in context, None if computation needed
+        Dynamically check if query can be answered from context using LLM
         """
-        logger.info(f"🔍 {self.name}: Checking MCP context for query: '{query}'")
-        logger.debug(f"📋 Entities to search: {entities}")
+        logger.info(f"🔍 {self.name}: Checking context for query: '{query}'")
         
-        # Get all agent contexts
-        all_contexts = mcp_store.get_all_contexts()
-        logger.info(f"📊 Available agent contexts: {list(all_contexts.keys())}")
-        
-        if not all_contexts:
-            logger.warning("⚠️  No contexts available in MCP store")
-            logger.info("❌ CACHE MISS: No contexts, computation needed")
+        # Get context stack
+        context_stack = mcp_store.get_context_stack()
+        if not context_stack:
+            logger.info("❌ CACHE MISS: No context history")
             return None
         
-        # Strategy 1: Check for specific year data
-        if entities and 'year' in entities and not entities.get('comparison'):
-            year = entities['year']
-            logger.info(f"🔎 Strategy 1: Looking for year {year} data...")
-            cached_result = self._find_year_in_context(year, all_contexts)
-            if cached_result:
-                logger.info(f"✅ CACHE HIT: Found cached data for year {year}")
-                return cached_result
-            else:
-                logger.debug(f"❌ No cached data found for year {year}")
+        # Strategy 1: LLM-powered semantic context matching
+        if self.llm:
+            logger.info("🤖 Using LLM for dynamic context resolution...")
+            llm_result = self._llm_resolve_context(query, context_stack)
+            if llm_result:
+                return llm_result
         
-        # Strategy 2: Check for comparison data
-        if entities and entities.get('comparison') and 'years' in entities:
-            years = entities['years']
-            logger.info(f"🔎 Strategy 2: Looking for comparison data for years {years}...")
-            cached_result = self._find_comparison_in_context(years, all_contexts)
-            if cached_result:
-                logger.info(f"✅ CACHE HIT: Found cached comparison for years {years}")
-                return cached_result
-            else:
-                logger.debug(f"❌ No cached comparison found for years {years}")
+        # Strategy 2: Similarity-based matching (fallback)
+        logger.info("📊 Using similarity-based matching...")
+        similar_contexts = mcp_store.get_similar_contexts(query, top_k=3)
         
-        # Strategy 3: Check conversation history
-        logger.info("🔎 Strategy 3: Checking conversation history...")
-        conversation_history = mcp_store.conversation_history if hasattr(mcp_store, 'conversation_history') else []
-        logger.debug(f"📜 Conversation history length: {len(conversation_history)}")
-        
-        if len(conversation_history) >= 2:
-            last_user = conversation_history[-2] if len(conversation_history) >= 2 else None
-            last_assistant = conversation_history[-1] if len(conversation_history) >= 1 else None
+        if similar_contexts:
+            best_match = similar_contexts[0]
+            similarity_score = self._calculate_query_similarity(query, best_match['query'])
             
-            if (last_user and last_assistant and 
-                last_user.get('role') == 'user' and 
-                last_assistant.get('role') == 'assistant'):
-                
-                similarity = self._calculate_similarity(query.lower(), last_user['content'].lower())
-                logger.debug(f"📏 Query similarity with last query: {similarity:.2f}")
-                
-                if similarity > 0.85:
-                    logger.info(f"✅ CACHE HIT: Very similar recent query (similarity: {similarity:.2f})")
-                    logger.debug(f"   └─ Previous: '{last_user['content']}'")
-                    logger.debug(f"   └─ Current:  '{query}'")
-                    return {
-                        "from_cache": True,
-                        "response": last_assistant['content']
-                    }
-                else:
-                    logger.debug(f"❌ Similarity {similarity:.2f} below threshold 0.85")
+            logger.info(f"📏 Best match similarity: {similarity_score:.2f}")
+            logger.info(f"   └─ Matched query: '{best_match['query']}'")
+            
+            if similarity_score > 0.6:  # Lower threshold for dynamic matching
+                logger.info(f"✅ CACHE HIT: High similarity match")
+                return {
+                    "from_cache": True,
+                    "response": best_match['response'],
+                    "cached_query": best_match['query'],
+                    "similarity": similarity_score
+                }
         
-        logger.info("❌ CACHE MISS: No suitable cached data found, computation needed")
+        # Strategy 3: Check agent contexts with dynamic extraction
+        all_contexts = mcp_store.get_all_contexts()
+        if all_contexts:
+            dynamic_result = self._dynamic_agent_context_search(query, entities, all_contexts)
+            if dynamic_result:
+                return dynamic_result
+        
+        logger.info("❌ CACHE MISS: No suitable context found")
         return None
     
-    def _find_year_in_context(self, year: int, all_contexts: dict) -> Optional[Dict[str, Any]]:
-        """Find cached data for a specific year in agent contexts"""
-        logger.debug(f"🔍 Searching for year {year} in {len(all_contexts)} agent contexts...")
+    def _llm_resolve_context(self, query: str, context_stack: List[Dict]) -> Optional[Dict[str, Any]]:
+        """Use LLM to intelligently match query with past contexts"""
+        try:
+            # Build context summary
+            context_summary = "\n".join([
+                f"{i+1}. Query: '{ctx['query']}' | Entities: {ctx['entities']} | Type: {ctx['query_type']}"
+                for i, ctx in enumerate(context_stack[:5])
+            ])
+            
+            prompt = f"""You are a context resolution assistant. Given a new query and past conversation contexts, determine if the new query can be answered using information from past contexts.
+
+**Current Query:** "{query}"
+
+**Past Contexts:**
+{context_summary}
+
+**Task:**
+1. Analyze if the current query is asking about the SAME information as any past query
+2. Check if pronouns or references (like "that", "it", "those") refer to entities from past contexts
+3. Determine if we can reuse a past response
+
+**Response Format (JSON):**
+{{
+  "can_reuse": true/false,
+  "matched_context_index": <index from 1-5 or null>,
+  "reasoning": "brief explanation",
+  "resolved_entities": {{"entity_type": "value"}}
+}}
+
+Think carefully about semantic similarity, not just exact matches."""
+
+            response = self.llm.invoke(prompt)
+            content = response.content
+            
+            # Parse LLM response
+            import json
+            import re
+            
+            json_match = re.search(r'\{[^}]+\}', content, re.DOTALL)
+            if json_match:
+                result = json.loads(json_match.group())
+                
+                if result.get('can_reuse') and result.get('matched_context_index'):
+                    idx = result['matched_context_index'] - 1
+                    if 0 <= idx < len(context_stack):
+                        matched_ctx = context_stack[idx]
+                        
+                        logger.info(f"✅ LLM matched context #{idx+1}")
+                        logger.info(f"   └─ Reasoning: {result.get('reasoning', 'N/A')}")
+                        
+                        # Check if we need to fetch full response from agent context
+                        full_response = self._get_full_response_for_context(matched_ctx)
+                        
+                        return {
+                            "from_cache": True,
+                            "response": full_response or matched_ctx['response'],
+                            "cached_query": matched_ctx['query'],
+                            "llm_reasoning": result.get('reasoning'),
+                            "resolved_entities": result.get('resolved_entities', {})
+                        }
+            
+            logger.info("🤖 LLM: No reusable context found")
+            return None
+            
+        except Exception as e:
+            logger.error(f"LLM context resolution failed: {e}")
+            return None
+    
+    def _get_full_response_for_context(self, context: Dict) -> Optional[str]:
+        """Retrieve full response from agent contexts based on matched context"""
+        all_contexts = mcp_store.get_all_contexts()
         
-        # Check AnalysisAgent context
-        if 'AnalysisAgent' in all_contexts:
-            logger.debug("   └─ Checking AnalysisAgent context...")
-            agent_data = all_contexts['AnalysisAgent'].get('data', {})
-            filtered_by = agent_data.get('filtered_by', {})
-            
-            logger.debug(f"      └─ Filtered by: {filtered_by}")
-            
-            # Check if this agent has data for the requested year
-            if filtered_by.get('year') == year:
-                logger.info(f"   ✅ Found matching year {year} in AnalysisAgent")
+        for agent_name, agent_ctx in all_contexts.items():
+            agent_data = agent_ctx.get('data', {})
+            if agent_data.get('query') == context['query']:
                 results = agent_data.get('results', {})
-                
-                logger.debug(f"      └─ Results status: {results.get('status')}")
-                
-                if results and results.get('status') == 'success':
+                if results.get('status') == 'success':
                     analysis_results = results.get('results', {})
                     
-                    logger.debug(f"      └─ Analysis results keys: {list(analysis_results.keys())}")
-                    
-                    if analysis_results:
-                        response_lines = []
-                        
-                        if 'total_sales' in analysis_results:
-                            response_lines.append(f"💰 **Total Sales:** ${analysis_results['total_sales']:,.2f}\n")
-                        if 'total_orders' in analysis_results:
-                            response_lines.append(f"📦 **Total Orders:** {analysis_results['total_orders']:,}\n")
-                        if 'avg_order_value' in analysis_results:
-                            response_lines.append(f"📊 **Average Order Value:** ${analysis_results['avg_order_value']:,.2f}\n")
-                        if 'unique_customers' in analysis_results:
-                            response_lines.append(f"👥 **Unique Customers:** {analysis_results['unique_customers']:,}\n")
-                        if 'unique_products' in analysis_results:
-                            response_lines.append(f"🏷️ **Unique Products:** {analysis_results['unique_products']:,}\n")
-                        
-                        if response_lines:
-                            logger.info(f"   ✅ Generated {len(response_lines)} response lines from cache")
-                            return {
-                                "from_cache": True,
-                                "response": "".join(response_lines),
-                                "cached_data": analysis_results
-                            }
-                        else:
-                            logger.warning("   ⚠️  No data to format in cached results")
-                else:
-                    logger.debug("   ❌ Results empty or not successful")
-            else:
-                logger.debug(f"   ❌ Year mismatch: cached={filtered_by.get('year')}, requested={year}")
-        else:
-            logger.debug("   ❌ AnalysisAgent not in contexts")
+                    if 'llm_raw' in analysis_results:
+                        # Extract clean response
+                        return self._extract_clean_llm_response(analysis_results['llm_raw'])
         
         return None
     
-    def _find_comparison_in_context(self, years: list, all_contexts: dict) -> Optional[Dict[str, Any]]:
-        """Find cached comparison data for multiple years"""
-        logger.debug(f"🔍 Searching for comparison data for years {years}...")
+    def _extract_clean_llm_response(self, llm_raw: str) -> str:
+        """Extract clean answer from LLM raw output"""
+        import re
         
-        # Check if AnalysisAgent has comparison data
-        if 'AnalysisAgent' in all_contexts:
-            logger.debug("   └─ Checking AnalysisAgent context...")
-            agent_data = all_contexts['AnalysisAgent'].get('data', {})
-            filtered_by = agent_data.get('filtered_by', {})
+        # Remove code blocks
+        cleaned = re.sub(r'``````', '', llm_raw, flags=re.DOTALL)
+        
+        # Extract bullet points
+        lines = cleaned.split('\n')
+        answer_lines = []
+        
+        for line in lines:
+            if line.strip().startswith('*') or line.strip().startswith('-'):
+                answer_lines.append(line.strip())
+        
+        if answer_lines:
+            return '\n'.join(answer_lines)
+        
+        # Fallback: return cleaned text
+        return cleaned.strip()[:500]
+    
+    def _dynamic_agent_context_search(self, query: str, entities: dict, all_contexts: dict) -> Optional[Dict[str, Any]]:
+        """Dynamically search agent contexts without field restrictions"""
+        
+        for agent_name, agent_ctx in all_contexts.items():
+            agent_data = agent_ctx.get('data', {})
             
-            logger.debug(f"      └─ Filtered by: {filtered_by}")
+            # Check if query is similar enough
+            past_query = agent_data.get('query', '')
+            similarity = self._calculate_query_similarity(query, past_query)
             
-            # Check if this is a comparison with matching years
-            if filtered_by.get('comparison') and 'years' in filtered_by:
-                cached_years = set(filtered_by['years'])
-                requested_years = set(years)
+            if similarity > 0.5:
+                logger.info(f"   ✅ Found similar query in {agent_name} (similarity: {similarity:.2f})")
                 
-                logger.debug(f"      └─ Cached years: {cached_years}")
-                logger.debug(f"      └─ Requested years: {requested_years}")
-                
-                if cached_years == requested_years:
-                    logger.info(f"   ✅ Found matching comparison for years {years}")
-                    results = agent_data.get('results', {})
+                results = agent_data.get('results', {})
+                if results.get('status') == 'success':
+                    analysis_results = results.get('results', {})
                     
-                    if results and results.get('status') == 'success':
-                        comparison_results = results.get('results', {})
-                        
-                        logger.debug(f"      └─ Comparison results keys: {list(comparison_results.keys())}")
-                        
-                        if 'comparison' in comparison_results:
-                            response_lines = []
-                            comp = comparison_results['comparison']
-                            
-                            response_lines.append(f"📊 **Comparison Results:**\n")
-                            response_lines.append(f"  • Sales Difference: ${comp.get('sales_difference', 0):,.2f}\n")
-                            response_lines.append(f"  • Growth: {comp.get('growth_percentage', 0):.2f}%\n")
-                            
-                            for year_key, year_data in comparison_results.items():
-                                if year_key.startswith('year_') and isinstance(year_data, dict):
-                                    year = year_key.split('_')[1]
-                                    response_lines.append(f"\n**Year {year}:**\n")
-                                    response_lines.append(f"  • Total Sales: ${year_data.get('total_sales', 0):,.2f}\n")
-                                    if 'total_orders' in year_data:
-                                        response_lines.append(f"  • Total Orders: {year_data['total_orders']:,}\n")
-                                    if 'avg_order_value' in year_data:
-                                        response_lines.append(f"  • Avg Order Value: ${year_data['avg_order_value']:,.2f}\n")
-                            
-                            if response_lines:
-                                logger.info(f"   ✅ Generated {len(response_lines)} response lines from comparison cache")
-                                return {
-                                    "from_cache": True,
-                                    "response": "".join(response_lines),
-                                    "cached_data": comparison_results
-                                }
-                        else:
-                            logger.warning("   ⚠️  No comparison key in results")
-                    else:
-                        logger.debug("   ❌ Results empty or not successful")
-                else:
-                    logger.debug(f"   ❌ Year mismatch: cached={cached_years}, requested={requested_years}")
-            else:
-                logger.debug("   ❌ Not a comparison or no years in filtered_by")
-        else:
-            logger.debug("   ❌ AnalysisAgent not in contexts")
+                    if 'llm_raw' in analysis_results:
+                        clean_response = self._extract_clean_llm_response(analysis_results['llm_raw'])
+                        return {
+                            "from_cache": True,
+                            "response": clean_response,
+                            "cached_query": past_query,
+                            "similarity": similarity
+                        }
         
         return None
     
-    def _calculate_similarity(self, query1: str, query2: str) -> float:
-        """Calculate similarity between two queries"""
-        stop_words = {'what', 'are', 'is', 'the', 'in', 'for', 'of', 'to', 'a', 'an'}
+    def _calculate_query_similarity(self, query1: str, query2: str) -> float:
+        """Calculate semantic similarity between queries"""
+        stop_words = {'what', 'are', 'is', 'the', 'in', 'for', 'of', 'to', 'a', 'an', 'was', 'were', 'will', 'be'}
         
-        words1 = set(query1.split()) - stop_words
-        words2 = set(query2.split()) - stop_words
+        words1 = set(query1.lower().split()) - stop_words
+        words2 = set(query2.lower().split()) - stop_words
         
         if not words1 or not words2:
             return 0.0
         
-        intersection = words1.intersection(words2)
-        union = words1.union(words2)
+        intersection = words1 & words2
+        union = words1 | words2
         
-        similarity = len(intersection) / len(union) if union else 0.0
-        
-        logger.debug(f"   └─ Words 1: {words1}")
-        logger.debug(f"   └─ Words 2: {words2}")
-        logger.debug(f"   └─ Intersection: {intersection}")
-        logger.debug(f"   └─ Similarity: {similarity:.2f}")
-        
-        return similarity
+        return len(intersection) / len(union) if union else 0.0
