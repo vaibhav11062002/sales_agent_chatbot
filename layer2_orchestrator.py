@@ -7,7 +7,6 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-
 class AgentState(TypedDict):
     """State passed between agents"""
     query: str
@@ -19,10 +18,9 @@ class AgentState(TypedDict):
     analysis_result: dict
     forecast_result: dict
     anomaly_result: dict
-    dashboard_result: dict  # ✅ NEW
+    dashboard_result: dict
     explanation: str
     final_response: str
-
 
 class AgentOrchestrator:
     """Layer 2: Orchestrates agent execution using LLM-based intelligent routing"""
@@ -33,13 +31,13 @@ class AgentOrchestrator:
         from layer3_agents.forecasting_agent import ForecastingAgent
         from layer3_agents.anomaly_detection_agent import AnomalyDetectionAgent
         from layer3_agents.explanation_agent import ExplanationAgent
-        from layer3_agents.dashboard_agent import DashboardAgent  # ✅ NEW
+        from layer3_agents.dashboard_agent import DashboardAgent
         
         self.analysis_agent = AnalysisAgent()
         self.forecast_agent = ForecastingAgent()
         self.anomaly_agent = AnomalyDetectionAgent()
         self.explanation_agent = ExplanationAgent()
-        self.dashboard_agent = DashboardAgent()  # ✅ NEW
+        self.dashboard_agent = DashboardAgent()
         
         # Initialize intelligent router and context manager
         self.router = IntelligentRouter()
@@ -57,7 +55,7 @@ class AgentOrchestrator:
         workflow.add_node("analyze", self._analyze_node)
         workflow.add_node("forecast", self._forecast_node)
         workflow.add_node("detect_anomalies", self._detect_anomalies_node)
-        workflow.add_node("create_dashboard", self._create_dashboard_node)  # ✅ NEW
+        workflow.add_node("create_dashboard", self._create_dashboard_node)
         workflow.add_node("aggregate_results", self._aggregate_results)
         
         # Start with context check
@@ -81,7 +79,7 @@ class AgentOrchestrator:
                 "analysis": "analyze",
                 "forecast": "forecast",
                 "anomaly": "detect_anomalies",
-                "dashboard": "create_dashboard"  # ✅ NEW
+                "dashboard": "create_dashboard"
             }
         )
         
@@ -89,7 +87,7 @@ class AgentOrchestrator:
         workflow.add_edge("analyze", "aggregate_results")
         workflow.add_edge("forecast", "aggregate_results")
         workflow.add_edge("detect_anomalies", "aggregate_results")
-        workflow.add_edge("create_dashboard", "aggregate_results")  # ✅ NEW
+        workflow.add_edge("create_dashboard", "aggregate_results")
         workflow.add_edge("aggregate_results", END)
         
         return workflow.compile()
@@ -114,7 +112,7 @@ class AgentOrchestrator:
         logger.info(f"🔍 STEP 2: CHECKING MCP CACHE")
         logger.info(f"{'='*60}")
         
-        # ✅ NEW: Skip cache check for dashboard queries (always fresh)
+        # Skip cache check for dashboard queries (always fresh)
         if state["intent"] == "dashboard":
             logger.info(f"📊 Dashboard query detected - skipping cache (always generate fresh)")
             state["from_cache"] = False
@@ -145,7 +143,7 @@ class AgentOrchestrator:
         return "use_cache" if state.get("from_cache") else "compute"
     
     def _route_query_with_llm(self, state: AgentState) -> AgentState:
-        """Use LLM to intelligently classify intent (already done in check_context)"""
+        """Use LLM to intelligently classify intent"""
         logger.info(f"LLM Routing Decision:")
         logger.info(f"  Intent: {state['intent']}")
         logger.info(f"  Entities: {state['entities']}")
@@ -167,14 +165,12 @@ class AgentOrchestrator:
         entities = state.get("entities", {})
         logger.info(f"📋 Entities passed to agent: {entities}")
         
-        # Handle comparison queries
-        if entities.get('comparison') and 'years' in entities:
-            logger.info(f"🔀 Detected comparison query for years: {entities['years']}")
-            result = self.analysis_agent.execute_comparison(state["query"], entities['years'])
-        else:
-            analysis_type = "aggregation" if "total" in state["query"].lower() else "summary"
-            logger.info(f"📈 Performing {analysis_type} analysis")
-            result = self.analysis_agent.execute(state["query"], analysis_type, entities=entities)
+        # Determine analysis type
+        analysis_type = "aggregation" if "total" in state["query"].lower() else "summary"
+        logger.info(f"📈 Performing {analysis_type} analysis")
+        
+        # Execute analysis
+        result = self.analysis_agent.execute(state["query"], analysis_type, entities=entities)
         
         state["analysis_result"] = result
         logger.info(f"✅ Analysis completed with status: {result.get('status')}")
@@ -213,9 +209,8 @@ class AgentOrchestrator:
         logger.info(f"{'='*60}\n")
         return state
     
-    # ✅ NEW: Dashboard Agent Node
     def _create_dashboard_node(self, state: AgentState) -> AgentState:
-        """Execute Dashboard Agent"""
+        """Execute Dashboard Agent with analysis agent reference"""
         logger.info(f"\n{'='*60}")
         logger.info(f"📊 EXECUTING: DashboardAgent")
         logger.info(f"{'='*60}")
@@ -223,7 +218,13 @@ class AgentOrchestrator:
         entities = state.get("entities", {})
         logger.info(f"📋 Entities passed to agent: {entities}")
         
-        result = self.dashboard_agent.execute(state["query"], entities=entities)
+        # ✅ Pass analysis_agent reference to dashboard for insights
+        result = self.dashboard_agent.execute(
+            state["query"], 
+            entities=entities,
+            analysis_agent=self.analysis_agent  # ✅ NEW: Pass analysis agent
+        )
+        
         state["dashboard_result"] = result
         
         logger.info(f"✅ Dashboard created: {result.get('status')}")
@@ -247,7 +248,7 @@ class AgentOrchestrator:
                 state["final_response"] = "🔄 (From Cache)\n\n" + cached['response']
                 return state
         
-        # ✅ NEW: Process Dashboard Results FIRST (if present)
+        # Process Dashboard Results FIRST (if present)
         if state.get("dashboard_result"):
             dashboard = state["dashboard_result"]
             if dashboard.get("status") == "success":
@@ -257,11 +258,10 @@ class AgentOrchestrator:
                 final_response.append(f"  • **Charts generated:** {dashboard.get('charts_generated', 0)}\n")
                 final_response.append(f"  • **File saved:** `{dashboard.get('output_path', 'N/A')}`\n\n")
                 final_response.append(f"💡 **Next Steps:**\n")
-                final_response.append(f"  1. Click 'View Dashboard' button to see the interactive dashboard\n")
-                final_response.append(f"  2. Use 'Save as PDF' to export the dashboard\n")
-                final_response.append(f"  3. Download the HTML file for sharing\n")
+                final_response.append(f"  1. Open the dashboard file in your browser\n")
+                final_response.append(f"  2. Explore interactive visualizations\n")
+                final_response.append(f"  3. Use browser's print function to save as PDF\n")
                 
-                # Set final response and return early (don't process other agents for dashboard)
                 state["final_response"] = "".join(final_response)
                 return state
             else:
@@ -272,42 +272,24 @@ class AgentOrchestrator:
         if state.get("analysis_result"):
             results = state["analysis_result"].get("results", {})
             
-            # ✅ UPDATED: Handle LLM raw responses
+            # Handle LLM raw responses
             if isinstance(results, dict) and 'llm_raw' in results:
-                # Extract clean response from LLM output
                 llm_raw = results['llm_raw']
                 clean_response = self._extract_clean_llm_response(llm_raw)
                 final_response.append(clean_response)
                 final_response.append("\n\n")
             elif isinstance(results, dict):
-                # Handle comparison results
-                if 'comparison' in results:
-                    comp = results['comparison']
-                    final_response.append(f"📊 **Comparison Results:**\n")
-                    final_response.append(f"  • Sales Difference: ${comp.get('sales_difference', 0):,.2f}\n")
-                    final_response.append(f"  • Growth: {comp.get('growth_percentage', 0):.2f}%\n")
-                    
-                    for year_key, year_data in results.items():
-                        if year_key.startswith('year_') and isinstance(year_data, dict):
-                            year = year_key.split('_')[1]
-                            final_response.append(f"\n**Year {year}:**\n")
-                            final_response.append(f"  • Total Sales: ${year_data.get('total_sales', 0):,.2f}\n")
-                            if 'total_orders' in year_data:
-                                final_response.append(f"  • Total Orders: {year_data['total_orders']:,}\n")
-                            if 'avg_order_value' in year_data:
-                                final_response.append(f"  • Avg Order Value: ${year_data['avg_order_value']:,.2f}\n")
-                else:
-                    # Regular structured results
-                    if "total_sales" in results:
-                        final_response.append(f"💰 **Total Sales:** ${results['total_sales']:,.2f}\n")
-                    if "total_orders" in results:
-                        final_response.append(f"📦 **Total Orders:** {results['total_orders']:,}\n")
-                    if "avg_order_value" in results:
-                        final_response.append(f"📊 **Average Order Value:** ${results['avg_order_value']:,.2f}\n")
-                    if "unique_customers" in results:
-                        final_response.append(f"👥 **Unique Customers:** {results['unique_customers']:,}\n")
-                    if "unique_products" in results:
-                        final_response.append(f"🏷️ **Unique Products:** {results['unique_products']:,}\n")
+                # Handle structured results
+                if "total_sales" in results:
+                    final_response.append(f"💰 **Total Sales:** ${results['total_sales']:,.2f}\n")
+                if "total_orders" in results:
+                    final_response.append(f"📦 **Total Orders:** {results['total_orders']:,}\n")
+                if "avg_order_value" in results:
+                    final_response.append(f"📊 **Average Order Value:** ${results['avg_order_value']:,.2f}\n")
+                if "unique_customers" in results:
+                    final_response.append(f"👥 **Unique Customers:** {results['unique_customers']:,}\n")
+                if "unique_products" in results:
+                    final_response.append(f"🏷️ **Unique Products:** {results['unique_products']:,}\n")
         
         # Process Forecast Results
         if state.get("forecast_result"):
@@ -383,7 +365,6 @@ class AgentOrchestrator:
         state["final_response"] = "".join(final_response) if final_response else "No results available"
         return state
     
-    # ✅ NEW: Helper method to extract clean LLM response
     def _extract_clean_llm_response(self, llm_raw: str) -> str:
         """Extract clean answer from LLM raw output"""
         import re
@@ -405,7 +386,6 @@ class AgentOrchestrator:
         if answer_lines:
             return '\n'.join(answer_lines)
         
-        # Fallback
         return cleaned.strip()[:1000] if cleaned.strip() else llm_raw[:500]
     
     def process_query(self, query: str) -> dict:
@@ -445,7 +425,7 @@ class AgentOrchestrator:
             "analysis_result": {},
             "forecast_result": {},
             "anomaly_result": {},
-            "dashboard_result": {},  # ✅ NEW
+            "dashboard_result": {},
             "explanation": "",
             "final_response": ""
         }
@@ -490,8 +470,8 @@ class AgentOrchestrator:
                 "intent": result["intent"],
                 "response": result["final_response"],
                 "from_cache": result.get("from_cache", False),
-                "forecast_result": result.get("forecast_result", {}),  # For UI expander
-                "dashboard_result": result.get("dashboard_result", {}),  # ✅ NEW: For UI
+                "forecast_result": result.get("forecast_result", {}),
+                "dashboard_result": result.get("dashboard_result", {}),
                 "dialogue_state": {
                     "entities": dialogue_state_after.get('entities', {}),
                     "entity_stack_size": len(entity_stack)
@@ -516,6 +496,6 @@ class AgentOrchestrator:
                 "response": f"❌ Error processing query: {str(e)}",
                 "from_cache": False,
                 "error_type": type(e).__name__,
-                "dashboard_result": {},  # ✅ NEW
+                "dashboard_result": {},
                 "dialogue_state": None
             }

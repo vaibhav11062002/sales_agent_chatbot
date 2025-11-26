@@ -5,9 +5,10 @@ from data_connector import mcp_store
 import os
 import re
 import json
+from config import GEMINI_API_KEY
 
 # Set API key FIRST, before any imports
-os.environ['GOOGLE_API_KEY'] = "AIzaSyBvGk-pDi2hqdq0CLSoKV2Sa8TH5IWShtE"
+os.environ['GOOGLE_API_KEY'] = GEMINI_API_KEY
 
 logger = logging.getLogger(__name__)
 

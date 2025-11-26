@@ -3,8 +3,12 @@ import logging
 import json
 import re
 from typing import Dict, Any, List
+from config import GEMINI_API_KEY
+
 
 logger = logging.getLogger(__name__)
+
+
 
 try:
     from langchain_google_genai import ChatGoogleGenerativeAI
@@ -23,9 +27,9 @@ class IntelligentRouter:
                 self.llm = ChatGoogleGenerativeAI(
                     model="gemini-2.5-flash",
                     temperature=0,
-                    api_key="AIzaSyBvGk-pDi2hqdq0CLSoKV2Sa8TH5IWShtE"
+                    api_key=GEMINI_API_KEY
                 )
-                logger.info(f"✅ IntelligentRouter initialized with model: gemini-2.0-flash-exp")
+                logger.info(f"✅ IntelligentRouter initialized with model: gemini-2.5-flash")
             except Exception as e:
                 logger.error(f"Failed to initialize LLM router: {e}")
     
@@ -73,10 +77,6 @@ class IntelligentRouter:
    - Keywords: anomaly, unusual, outlier, detect, abnormal, suspicious
    - Examples: "detect anomalies", "find unusual orders", "show outliers"
 
-5. **comparison** - Comparing time periods or entities
-   - Keywords: compare, versus, vs, difference between
-   - Examples: "compare 2023 vs 2024", "difference between Q1 and Q2"
-
 **CRITICAL RULES:**
 - If query contains "chart", "graph", "visualization", "plot", "dashboard", "visualize", "visual" → **ALWAYS dashboard intent**
 - If query says "for the same" or "that" referring to previous data AND asks for visuals → **dashboard intent**
@@ -85,7 +85,7 @@ class IntelligentRouter:
 
 **Response Format (JSON only, no markdown):**
 {{
-  "intent": "dashboard|analysis|forecast|anomaly|comparison",
+  "intent": "dashboard|analysis|forecast|anomaly",
   "entities": {{
     "year": 2024,
     "customer_id": "C12345",
@@ -199,14 +199,11 @@ Analyze the query and respond with JSON only."""
         # Existing fallback logic
         forecast_keywords = ['forecast', 'predict', 'future', 'next', 'will be', 'projection']
         anomaly_keywords = ['anomaly', 'anomalies', 'outlier', 'unusual', 'detect', 'abnormal']
-        comparison_keywords = ['compare', 'comparison', 'versus', 'vs', 'difference']
         
         if any(keyword in query_lower for keyword in forecast_keywords):
             intent = "forecast"
         elif any(keyword in query_lower for keyword in anomaly_keywords):
             intent = "anomaly"
-        elif any(keyword in query_lower for keyword in comparison_keywords):
-            intent = "comparison"
         else:
             intent = "analysis"
         

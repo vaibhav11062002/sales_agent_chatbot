@@ -13,6 +13,10 @@ tenserflow
 pmdarima
 pdfkit
 plotly
+matplotlib 
+seaborn 
+numpy
+weasyprint
 
 # MCP packages
 fastmcp

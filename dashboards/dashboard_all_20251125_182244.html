@@ -1,0 +1,74 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Overall Sales Performance Analysis</title>
+    <script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&display=swap" rel="stylesheet">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: 'Inter', sans-serif; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 20px; line-height: 1.6; color: #333; }
+        .container { max-width: 1600px; margin: 0 auto; }
+        .header { background: white; padding: 40px; border-radius: 16px; margin-bottom: 24px; box-shadow: 0 8px 32px rgba(0,0,0,0.12); }
+        .header h1 { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent; font-size: 2.5rem; font-weight: 700; margin-bottom: 12px; }
+        .header .description { color: #666; font-size: 1.1rem; margin-bottom: 20px; }
+        .metadata { display: flex; flex-wrap: wrap; gap: 16px; padding-top: 20px; border-top: 2px solid #f0f0f0; }
+        .metadata-item { padding: 8px 16px; background: #f8f9fa; border-radius: 8px; font-size: 0.9rem; }
+        .metadata-item strong { color: #667eea; margin-right: 6px; }
+        .insights-box { background: white; padding: 32px; border-radius: 16px; margin-bottom: 24px; box-shadow: 0 8px 32px rgba(0,0,0,0.12); }
+        .insights-box h2 { color: #2c3e50; font-size: 1.8rem; margin-bottom: 20px; font-weight: 700; }
+        .insights-box h3 { color: #34495e; font-size: 1.3rem; margin-top: 24px; margin-bottom: 12px; font-weight: 600; }
+        .insights-box p { color: #555; font-size: 1.05rem; line-height: 1.7; margin-bottom: 16px; }
+        .insights-box ul { list-style: none; padding-left: 0; }
+        .insights-box li { color: #555; font-size: 1.05rem; padding: 10px 0; padding-left: 28px; position: relative; line-height: 1.6; }
+        .insights-box li::before { content: "▸"; color: #667eea; font-weight: bold; position: absolute; left: 8px; top: 10px; }
+        .charts-container { display: grid; grid-template-columns: repeat(auto-fit, minmax(700px, 1fr)); gap: 24px; margin-bottom: 24px; }
+        .chart-card { background: white; border-radius: 16px; overflow: hidden; box-shadow: 0 8px 32px rgba(0,0,0,0.12); transition: transform 0.3s; display: flex; flex-direction: column; }
+        .chart-card:hover { transform: translateY(-4px); box-shadow: 0 12px 48px rgba(0,0,0,0.18); }
+        .chart-content { padding: 20px; flex-grow: 1; }
+        .chart-insight-box { padding: 20px; background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%); border-top: 1px solid #dee2e6; min-height: 80px; }
+        .chart-insight-box p { color: #495057; font-size: 0.95rem; line-height: 1.6; margin: 0; }
+        .footer { background: white; padding: 32px; border-radius: 16px; text-align: center; box-shadow: 0 8px 32px rgba(0,0,0,0.12); }
+        .footer strong { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent; font-weight: 700; }
+        @media (max-width: 1400px) { .charts-container { grid-template-columns: 1fr; } }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>📊 Overall Sales Performance Analysis</h1>
+            <p class="description">This dashboard provides a comprehensive overview of sales performance, trends, and key contributing factors across various dimensions such as customers, products, and sales organizations. It helps in understanding revenue generation, cost implications, and customer/product impact on overall sales.</p>
+            <div class="metadata">
+                <div class="metadata-item"><strong>Generated:</strong> November 25, 2025 at 18:22</div>
+                <div class="metadata-item"><strong>Query:</strong> "generate a dashboard for overall sales analysis"</div>
+                <div class="metadata-item"><strong>Charts:</strong> 0</div>
+            </div>
+        </div>
+        
+        <div class="insights-box">
+            <h2>📈 Executive Summary</h2>
+            <p>This analysis reveals a business generating exceptionally high revenue with a strong profit margin, indicating a highly valuable product or service. However, the company faces critical strategic risks due to extreme customer concentration, with only 8 customers driving over $451 billion in revenue. Compounding this vulnerability is a concerning -12.5% Month-over-Month growth, signaling an urgent need for strategic intervention to diversify the customer base and stabilize performance.</p>
+            
+            <h3>🔑 Key Findings</h3>
+            <ul>
+                <li>**Exceptional Revenue Scale with High Profitability:** The business achieves an impressive total revenue of over $451 billion with a healthy 33.0% profit margin, demonstrating strong operational efficiency and market value.</li><li>**Extreme Customer Concentration Posing Major Risk:** With only 8 customers and a customer concentration of 40.1%, the business is critically dependent on a very small client base, making it highly vulnerable to the loss or reduced spending of even one customer.</li><li>**Concerning Negative Growth Trend:** A significant -12.5% Month-over-Month growth indicates a recent decline in performance, which, when combined with severe customer concentration, highlights an urgent need for strategic re-evaluation.</li><li>**High Reliance on Key Customer and Product:** The top customer (1002) accounts for over $63 billion, and the top product (RE630) generates over $95 billion, further intensifying concentration risks across both customer and product dimensions.</li>
+            </ul>
+            
+            <h3>💡 Strategic Recommendations</h3>
+            <ul>
+                <li>**Prioritize Customer Acquisition and Diversification:** Immediately develop and execute aggressive strategies to expand the customer base, focusing on acquiring new high-value clients to significantly reduce reliance on the current limited set of 8 customers.</li><li>**Investigate and Address MoM Decline Root Causes:** Conduct a deep-dive analysis to identify the precise reasons behind the -12.5% MoM growth, including potential customer churn, reduced order volumes from existing clients, or competitive pressures, and implement targeted corrective actions.</li><li>**Strengthen Relationships and Value Proposition for Existing Customers:** Implement robust key account management strategies for the current 8 customers to ensure satisfaction, identify upselling/cross-selling opportunities, and secure long-term contracts, while simultaneously working to diversify.</li>
+            </ul>
+        </div>
+        
+        <div class="charts-container">
+
+        </div>
+        <div class="footer">
+            <p><strong>Sales Agent AI</strong> • Local + Analysis Agent</p>
+            <p style="margin-top: 8px; color: #666; font-size: 0.9rem;">Generated 0 visualizations</p>
+        </div>
+    </div>
+</body>
+</html>

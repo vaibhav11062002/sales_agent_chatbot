@@ -1,0 +1,74 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Overall Sales Analysis Dashboard</title>
+    <script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&display=swap" rel="stylesheet">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: 'Inter', sans-serif; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 20px; line-height: 1.6; color: #333; }
+        .container { max-width: 1600px; margin: 0 auto; }
+        .header { background: white; padding: 40px; border-radius: 16px; margin-bottom: 24px; box-shadow: 0 8px 32px rgba(0,0,0,0.12); }
+        .header h1 { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent; font-size: 2.5rem; font-weight: 700; margin-bottom: 12px; }
+        .header .description { color: #666; font-size: 1.1rem; margin-bottom: 20px; }
+        .metadata { display: flex; flex-wrap: wrap; gap: 16px; padding-top: 20px; border-top: 2px solid #f0f0f0; }
+        .metadata-item { padding: 8px 16px; background: #f8f9fa; border-radius: 8px; font-size: 0.9rem; }
+        .metadata-item strong { color: #667eea; margin-right: 6px; }
+        .insights-box { background: white; padding: 32px; border-radius: 16px; margin-bottom: 24px; box-shadow: 0 8px 32px rgba(0,0,0,0.12); }
+        .insights-box h2 { color: #2c3e50; font-size: 1.8rem; margin-bottom: 20px; font-weight: 700; }
+        .insights-box h3 { color: #34495e; font-size: 1.3rem; margin-top: 24px; margin-bottom: 12px; font-weight: 600; }
+        .insights-box p { color: #555; font-size: 1.05rem; line-height: 1.7; margin-bottom: 16px; }
+        .insights-box ul { list-style: none; padding-left: 0; }
+        .insights-box li { color: #555; font-size: 1.05rem; padding: 10px 0; padding-left: 28px; position: relative; line-height: 1.6; }
+        .insights-box li::before { content: "▸"; color: #667eea; font-weight: bold; position: absolute; left: 8px; top: 10px; }
+        .charts-container { display: grid; grid-template-columns: repeat(auto-fit, minmax(700px, 1fr)); gap: 24px; margin-bottom: 24px; }
+        .chart-card { background: white; border-radius: 16px; overflow: hidden; box-shadow: 0 8px 32px rgba(0,0,0,0.12); transition: transform 0.3s ease; display: flex; flex-direction: column; }
+        .chart-card:hover { transform: translateY(-4px); box-shadow: 0 12px 48px rgba(0,0,0,0.18); }
+        .chart-content { padding: 20px; flex-grow: 1; }
+        .chart-insight-box { padding: 20px; background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%); border-top: 1px solid #dee2e6; min-height: 80px; }
+        .chart-insight-box p { color: #495057; font-size: 0.95rem; line-height: 1.6; margin: 0; }
+        .footer { background: white; padding: 32px; border-radius: 16px; text-align: center; box-shadow: 0 8px 32px rgba(0,0,0,0.12); }
+        .footer strong { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent; font-weight: 700; }
+        @media (max-width: 1400px) { .charts-container { grid-template-columns: 1fr; } }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>📊 Overall Sales Analysis Dashboard</h1>
+            <p class="description">A comprehensive dashboard providing insights into sales performance, customer behavior, product trends, and financial metrics over time.</p>
+            <div class="metadata">
+                <div class="metadata-item"><strong>Generated:</strong> November 25, 2025 at 18:21</div>
+                <div class="metadata-item"><strong>Query:</strong> "generate a dashboard for overall sales analysis"</div>
+                <div class="metadata-item"><strong>Charts:</strong> 0</div>
+            </div>
+        </div>
+        
+        <div class="insights-box">
+            <h2>📈 Executive Summary</h2>
+            <p>The business has generated an exceptionally high total revenue of over $451 billion with a healthy 33.0% profit margin, primarily driven by an extremely high average order value. However, this performance is underpinned by an alarmingly small and concentrated customer base, leading to significant dependency risks. A concerning Month-over-Month growth decline of -12.5% indicates a critical need for immediate strategic intervention to prevent further revenue erosion.</p>
+            
+            <h3>🔑 Key Findings</h3>
+            <ul>
+                <li>Total revenue reached an impressive $451,373,624,700.00, largely propelled by an exceptionally high Average Order Value of $43,967,818.50 across 10,266 orders.</li><li>The business operates with an extremely concentrated customer base of only 8 unique customers, with the top 3 customers accounting for 40.1% of total revenue, and Customer 1002 alone contributing $63,352,267,800.00.</li><li>Despite a strong 33.0% profit margin, the company is experiencing a significant negative Month-over-Month growth of -12.5%, indicating a concerning downward trend in recent sales performance.</li><li>Product RE630 is a critical revenue driver, generating $95,174,508,000.00, highlighting a potential over-reliance on a single product within the limited 18 unique product offerings.</li>
+            </ul>
+            
+            <h3>💡 Strategic Recommendations</h3>
+            <ul>
+                <li>Immediately investigate the root causes of the -12.5% Month-over-Month growth decline and implement targeted strategies to stabilize and reverse this negative trend.</li><li>Develop and execute a robust customer acquisition strategy to diversify the customer base, reducing the high dependency on the current 8 unique customers and mitigating concentration risk.</li><li>Implement a comprehensive key account management program for top customers like 1002 and analyze the success factors of product RE630 to inform new product development or cross-selling opportunities.</li>
+            </ul>
+        </div>
+        
+        <div class="charts-container">
+
+        </div>
+        <div class="footer">
+            <p><strong>Sales Agent AI</strong> • Powered by Analysis Agent & Plotly</p>
+            <p style="margin-top: 8px; color: #666; font-size: 0.9rem;">Generated 0 visualizations with consistent data</p>
+        </div>
+    </div>
+</body>
+</html>
