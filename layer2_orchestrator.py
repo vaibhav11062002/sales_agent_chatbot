@@ -238,15 +238,21 @@ class AgentOrchestrator:
     # ============== RESULT AGGREGATION ==============
     
     def _aggregate_results(self, state: AgentState) -> AgentState:
-        """Aggregate results (from cache or agents)"""
+        """Aggregate results (from cache or agents) with explanation"""
         final_response = []
         
-        # If from cache, use cached response
+        # ✅ FIX: If from cache, structure it as analysis_result for explanation
         if state.get("from_cache"):
             cached = state.get("cached_response", {})
             if 'response' in cached:
-                state["final_response"] = "🔄 (From Cache)\n\n" + cached['response']
-                return state
+                # Structure cached response as analysis result
+                state["analysis_result"] = {
+                    "status": "success",
+                    "analysis_type": "cached_analysis",
+                    "results": {"llm_raw": cached['response']}
+                }
+                logger.info("🔄 Cached response structured for explanation generation")
+                # Don't return early - continue to explanation generation
         
         # Process Dashboard Results FIRST (if present)
         if state.get("dashboard_result"):
@@ -268,7 +274,7 @@ class AgentOrchestrator:
                 final_response.append(f"❌ **Dashboard Creation Failed:**\n")
                 final_response.append(f"  • Error: {dashboard.get('message', 'Unknown error')}\n\n")
         
-        # Process Analysis Results
+        # Process Analysis Results (including cached ones)
         if state.get("analysis_result"):
             results = state["analysis_result"].get("results", {})
             
@@ -339,24 +345,30 @@ class AgentOrchestrator:
                             f"${anom.get('NetAmount', 0):,.2f}\n"
                         )
         
-        # Generate AI Explanation (skip for dashboard queries)
+        # ✅ Generate AI Explanation for ALL queries (including cached ones)
         if state.get("intent") != "dashboard":
             try:
+                # Add cache indicator to explanation context
+                explanation_context = {
+                    "analysis": state.get("analysis_result"),
+                    "forecast": state.get("forecast_result"),
+                    "anomaly": state.get("anomaly_result"),
+                    "from_cache": state.get("from_cache", False)  # ✅ Pass cache status
+                }
+                
                 explanation_result = self.explanation_agent.execute(
                     state["query"],
-                    {
-                        "analysis": state.get("analysis_result"),
-                        "forecast": state.get("forecast_result"),
-                        "anomaly": state.get("anomaly_result")
-                    }
+                    explanation_context
                 )
                 
                 if explanation_result.get("status") == "success":
                     explanation = explanation_result.get("explanation", "")
                     if explanation:
-                        final_response.append(f"\n---\n\n💡 **AI Insights:**\n\n{explanation}")
+                        # ✅ Add cache indicator if from cache
+                        cache_prefix = "🔄 *(Retrieved from cache)* " if state.get("from_cache") else ""
+                        final_response.append(f"\n---\n\n💡 **AI Insights:**\n\n{cache_prefix}{explanation}")
                         state["explanation"] = explanation
-                        logger.info("AI explanation generated successfully")
+                        logger.info("AI explanation generated successfully" + (" (for cached result)" if state.get("from_cache") else ""))
             
             except Exception as e:
                 logger.error(f"Error generating explanation: {str(e)}")
@@ -364,6 +376,7 @@ class AgentOrchestrator:
         # Finalize response
         state["final_response"] = "".join(final_response) if final_response else "No results available"
         return state
+
     
     def _extract_clean_llm_response(self, llm_raw: str) -> str:
         """Extract clean answer from LLM raw output"""

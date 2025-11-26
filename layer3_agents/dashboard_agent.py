@@ -50,7 +50,7 @@ class DashboardAgent:
             if LLM_AVAILABLE:
                 self.llm = ChatGoogleGenerativeAI(
                     model="gemini-2.5-flash",
-                    temperature=0.3,
+                    temperature=0,
                     api_key=GEMINI_API_KEY
                 )
                 logger.info("[DashboardAgent] ✅ Initialized with FULLY LLM-DRIVEN mode")
@@ -128,7 +128,7 @@ class DashboardAgent:
     # ===========================
     
     def _resolve_dashboard_context(self, query: str, entities: dict = None) -> dict:
-        """Resolve entities for dashboard"""
+        """Dynamically resolve entities for dashboard based on query intent"""
         query_lower = query.lower()
         dialogue_state = mcp_store.get_current_dialogue_state()
         all_entities = dialogue_state.get("entities", {})
@@ -137,29 +137,64 @@ class DashboardAgent:
         logger.info("="*60)
         logger.info("🔍 DASHBOARD CONTEXT RESOLUTION")
         logger.info("="*60)
+        logger.info(f"Query: '{query}'")
+        logger.info(f"Incoming entities: {entities}")
+        logger.info(f"Dialogue entities: {all_entities}")
         
-        # Handle comparison queries
+        # ✅ CRITICAL: Detect if this is a NEW/GLOBAL/OVERALL dashboard request
+        global_keywords = [
+            'overall', '360', 'all', 'complete', 'comprehensive', 
+            'full', 'entire', 'total', 'global', 'new dashboard',
+            'create dashboard', 'build dashboard', 'generate dashboard'
+        ]
+        
+        is_global_request = any(keyword in query_lower for keyword in global_keywords)
+        
+        # ✅ If it's a global request AND no specific entity mentioned in query
+        if is_global_request:
+            # Check if query explicitly mentions a customer/product/year
+            has_specific_customer = bool(re.search(r'customer\s+(\d+)', query_lower))
+            has_specific_product = bool(re.search(r'product\s+([A-Z0-9]+)', query_lower, re.IGNORECASE))
+            has_specific_year = bool(re.search(r'\b(20\d{2})\b', query))
+            
+            if not (has_specific_customer or has_specific_product or has_specific_year):
+                logger.info("🌎 Detected GLOBAL dashboard request without specific entities")
+                logger.info("✅ Clearing all entity filters for fresh analysis")
+                return {}
+        
+        # ✅ Check if it's a comparison query
         if self._is_comparison_query(query_lower):
             comparison_context = self._extract_comparison_context(query, entities, all_entities)
             if comparison_context:
-                logger.info(f"✅ Comparison detected: {comparison_context}")
+                logger.info(f"✅ Comparison: {comparison_context}")
                 return comparison_context
         
-        # Handle reference queries
-        if any(phrase in query_lower for phrase in ['for the same', 'for that']):
+        # ✅ Handle reference queries ("for the same", "for that")
+        if any(phrase in query_lower for phrase in ['for the same', 'for that', 'same as']):
             recent_entities = self._get_most_recent_entities(entity_stack, all_entities)
-            logger.info(f"✅ Reference context: {recent_entities}")
+            logger.info(f"✅ Same reference: {recent_entities}")
             return recent_entities
         
-        # Use provided or recent entities
-        if entities:
-            filtered_entities = self._filter_dashboard_entities(entities)
-            logger.info(f"✅ Provided entities: {filtered_entities}")
-            return filtered_entities
+        # ✅ Use provided entities if they exist
+        if entities and any(k in entities for k in ['customer_id', 'product_id', 'year', 'sales_org']):
+            filtered = self._filter_dashboard_entities(entities)
+            logger.info(f"✅ Using provided entities: {filtered}")
+            return filtered
         
-        recent_context = self._filter_dashboard_entities(all_entities)
-        logger.info(f"✅ Recent context: {recent_context}")
-        return recent_context
+        # ✅ Check if there are RELEVANT recent entities (not just any old filters)
+        # Only use recent context if query implies continuation
+        continuation_keywords = ['that', 'those', 'it', 'them', 'this', 'these']
+        has_continuation = any(kw in query_lower for kw in continuation_keywords)
+        
+        if has_continuation:
+            recent_context = self._filter_dashboard_entities(all_entities)
+            logger.info(f"✅ Continuation query - using recent context: {recent_context}")
+            return recent_context
+        
+        # ✅ Default: Return empty for new standalone queries
+        logger.info(f"✅ New standalone query - no entity filters applied")
+        return {}
+
     
     def _is_comparison_query(self, query_lower: str) -> bool:
         return any(kw in query_lower for kw in ['comparison', 'compare', 'vs', 'versus', 'difference between', 'contrast'])
@@ -196,7 +231,7 @@ class DashboardAgent:
         return {k: v for k, v in entities.items() if k in DASHBOARD_KEYS and v}
     
     def _filter_dataframe(self, df: pd.DataFrame, entities: dict) -> pd.DataFrame:
-        """Filter dataframe based on entities"""
+        """Filter dataframe based on entities - handles both single values and lists"""
         filtered = df.copy()
         
         if entities.get('is_comparison'):
@@ -207,21 +242,43 @@ class DashboardAgent:
                 years_int = [int(y) if isinstance(y, str) else y for y in comparison_values]
                 filtered = filtered[filtered['CreationDate'].dt.year.isin(years_int)]
         else:
+            # ✅ Handle year filtering
             if 'year' in entities:
                 year_int = int(entities['year']) if isinstance(entities['year'], str) else entities['year']
                 filtered = filtered[filtered['CreationDate'].dt.year == year_int]
             
+            # ✅ Handle customer_id filtering (single or list)
             if 'customer_id' in entities:
-                filtered = filtered[filtered['SoldToParty'] == str(entities['customer_id'])]
+                customer_id = entities['customer_id']
+                if isinstance(customer_id, list):
+                    # Convert all to strings for comparison
+                    customer_id_str = [str(c) for c in customer_id]
+                    filtered = filtered[filtered['SoldToParty'].isin(customer_id_str)]
+                    logger.info(f"[Filter] Filtering by customer_id list: {customer_id_str}")
+                else:
+                    filtered = filtered[filtered['SoldToParty'] == str(customer_id)]
+                    logger.info(f"[Filter] Filtering by customer_id: {customer_id}")
             
+            # ✅ Handle product_id filtering (single or list)
             if 'product_id' in entities:
-                filtered = filtered[filtered['Product'] == str(entities['product_id'])]
+                product_id = entities['product_id']
+                if isinstance(product_id, list):
+                    # Convert all to strings for comparison
+                    product_id_str = [str(p) for p in product_id]
+                    filtered = filtered[filtered['Product'].isin(product_id_str)]
+                    logger.info(f"[Filter] Filtering by product_id list: {product_id_str}")
+                else:
+                    filtered = filtered[filtered['Product'] == str(product_id)]
+                    logger.info(f"[Filter] Filtering by product_id: {product_id}")
             
+            # ✅ Handle sales_org filtering
             if 'sales_org' in entities:
                 filtered = filtered[filtered['SalesOrganization'] == str(entities['sales_org'])]
+                logger.info(f"[Filter] Filtering by sales_org: {entities['sales_org']}")
         
         logger.info(f"[Filter] {len(df)} → {len(filtered)} rows")
         return filtered
+
     
     # ===========================
     # ✅ FULLY LLM-DRIVEN DASHBOARD PLANNING

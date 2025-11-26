@@ -93,6 +93,12 @@ Final Answer:
 * **Key Finding:** Value with units
 
 **Remember:** Your Final Answer MUST match your execution output EXACTLY.
+
+**CRITICAL RULE:**
+
+After executing your Python code, you must ALWAYS copy the precise output values (including all table entries, metrics, and result order) from your last print statement or code result DIRECTLY into your Final Answer block. You are STRICTLY FORBIDDEN from making up, reordering, reformatting, or substituting any values in your Final Answer. The content (IDs, counts, values, column order) in your Final Answer MUST MATCH the actual code output EXACTLY. If the output is a table or DataFrame, convert it to a Markdown table with the same rows, columns, and values—no changes allowed. If any mismatch occurs, it will be treated as a critical error.
+If in doubt: the Final Answer = last code output, faithfully converted to Markdown if needed, nothing else.
+
 """
             
             # Create pandas dataframe agent
