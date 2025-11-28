@@ -7,10 +7,13 @@ import re
 import json
 from config import GEMINI_API_KEY
 
+
 # Set API key FIRST, before any imports
 os.environ['GOOGLE_API_KEY'] = GEMINI_API_KEY
 
+
 logger = logging.getLogger(__name__)
+
 
 # Gemini + LangChain agent imports
 try:
@@ -23,8 +26,10 @@ except ImportError as e:
     logger.error(f"❌ LangChain import failed: {e}")
 
 
+
 class AnalysisAgent:
-    """Dynamic Analysis Agent powered by Gemini LLM for pandas with hallucination detection."""
+    """Dynamic Analysis Agent powered by Gemini LLM with anomaly detection support."""
+
 
     def __init__(self):
         self.name = "AnalysisAgent"
@@ -57,49 +62,18 @@ class AnalysisAgent:
             )
             logger.info("✅ Entity extractor LLM initialized")
             
-            # Load DataFrame
+            # Load DataFrame (check for anomaly-enriched data first)
             logger.info("🔄 Loading sales data from mcp_store...")
-            df = mcp_store.get_sales_data()
+            df = self._get_dataframe_with_anomalies()
             logger.info(f"✅ Data loaded: {len(df)} rows, {len(df.columns)} columns")
             
-            # Define agent prefix (simplified to avoid template variable issues)
-            custom_prefix = """
-You are a business analytics assistant working with a pandas DataFrame called `df`.
-This DataFrame contains sales data from SAP HANA with these columns:
-- CreationDate (datetime): Transaction date
-- NetAmount (float): Revenue/sales amount
-- OrderQuantity (float): Quantity sold
-- TaxAmount (float): Tax amount
-- CostAmount (float): Cost of goods sold
-- SoldToParty (str): Customer ID
-- Product (str): Product ID
-- SalesDocument (str): Sales document number
-- SalesOrganization (str): Sales organization ID
-
-**CRITICAL RULES:**
-1. For SPECIFIC customer queries: Filter first, then calculate
-   Example: df[df['SoldToParty'] == '1002']['NetAmount'].sum()
-
-2. For HIGHEST/TOP customer queries: Use groupby + idxmax()
-   Example: df.groupby('SoldToParty')['NetAmount'].sum().idxmax()
-
-3. Always PRINT the customer ID and use that EXACT value in Final Answer
-   Example: print(f"Customer ID: 1002") then say "Customer: 1002"
-
-4. DO NOT change customer IDs between execution and final answer
-
-**Output Format:**
-Final Answer:
-* **Key Finding:** Value with units
-
-**Remember:** Your Final Answer MUST match your execution output EXACTLY.
-
-**CRITICAL RULE:**
-
-After executing your Python code, you must ALWAYS copy the precise output values (including all table entries, metrics, and result order) from your last print statement or code result DIRECTLY into your Final Answer block. You are STRICTLY FORBIDDEN from making up, reordering, reformatting, or substituting any values in your Final Answer. The content (IDs, counts, values, column order) in your Final Answer MUST MATCH the actual code output EXACTLY. If the output is a table or DataFrame, convert it to a Markdown table with the same rows, columns, and values—no changes allowed. If any mismatch occurs, it will be treated as a critical error.
-If in doubt: the Final Answer = last code output, faithfully converted to Markdown if needed, nothing else.
-
-"""
+            # Check if anomaly columns are present
+            has_anomalies = 'is_anomaly' in df.columns
+            if has_anomalies:
+                logger.info(f"✅ Anomaly data available: {df['is_anomaly'].sum()} anomalies detected")
+            
+            # Define agent prefix with anomaly support
+            custom_prefix = self._build_agent_prefix(has_anomalies)
             
             # Create pandas dataframe agent
             logger.info("🔄 Creating pandas dataframe agent...")
@@ -117,15 +91,287 @@ If in doubt: the Final Answer = last code output, faithfully converted to Markdo
                 }
             )
             
-            logger.info("✅ [AnalysisAgent] Dynamic Gemini LLM agent initialized on FULL dataframe")
+            logger.info("✅ [AnalysisAgent] Dynamic Gemini LLM agent initialized")
             logger.info(f"   └─ Model: gemini-2.5-flash")
             logger.info(f"   └─ DataFrame shape: {df.shape}")
+            logger.info(f"   └─ Anomaly support: {has_anomalies}")
             logger.info(f"   └─ Max iterations: 10")
             
         except Exception as e:
             logger.error(f"❌ [AnalysisAgent] Failed to set up LLM analytics agent: {e}", exc_info=True)
             self.llm_agent = None
             self.entity_extractor_llm = None
+
+
+    def _get_dataframe_with_anomalies(self) -> pd.DataFrame:
+        """Get dataframe with anomaly flags if available, otherwise regular data"""
+        
+        # Try to get enriched data with anomaly flags
+        df_with_anomalies = mcp_store.get_enriched_data('anomalies')
+        
+        if df_with_anomalies is not None and 'is_anomaly' in df_with_anomalies.columns:
+            logger.info("✅ Using anomaly-enriched dataframe")
+            return df_with_anomalies
+        else:
+            logger.info("ℹ️ No anomaly data available, using regular dataframe")
+            return mcp_store.get_sales_data()
+
+
+    def _build_agent_prefix(self, has_anomalies: bool) -> str:
+        """Build agent prefix with optional anomaly instructions"""
+        
+        base_columns = """
+- CreationDate (datetime): Transaction date
+- NetAmount (float): Revenue/sales amount
+- OrderQuantity (float): Quantity sold
+- TaxAmount (float): Tax amount
+- CostAmount (float): Cost of goods sold
+- SoldToParty (str): Customer ID
+- Product (str): Product ID
+- SalesDocument (str): Sales document number
+- SalesOrganization (str): Sales organization ID"""
+
+        anomaly_columns = """
+- is_anomaly (bool): Whether this record is flagged as anomaly
+- anomaly_score (float): Anomaly severity score (lower = more severe)
+- anomaly_reason (str): Human-readable explanation of why it's anomalous"""
+
+        anomaly_rules = """
+
+**ANOMALY ANALYSIS RULES:**
+1. To filter anomalies: df[df['is_anomaly'] == True]
+2. To count anomalies by customer: df[df['is_anomaly']].groupby('SoldToParty').size()
+3. To get customer with most anomalies: df[df['is_anomaly']].groupby('SoldToParty').size().idxmax()
+4. Always include anomaly_reason when showing anomalies
+5. Sort by anomaly_score (ascending) to show most severe first"""
+
+        prefix = f"""
+You are a business analytics assistant working with a pandas DataFrame called `df`.
+This DataFrame contains sales data from SAP HANA with these columns:
+{base_columns}
+"""
+
+        if has_anomalies:
+            prefix += anomaly_columns
+            prefix += anomaly_rules
+
+        prefix += """
+
+**CRITICAL RULES:**
+1. For SPECIFIC customer queries: Filter first, then calculate
+   Example: df[df['SoldToParty'] == '1002']['NetAmount'].sum()
+
+2. For HIGHEST/TOP customer queries: Use groupby + idxmax()
+   Example: df.groupby('SoldToParty')['NetAmount'].sum().idxmax()
+
+3. Always PRINT the customer ID and use that EXACT value in Final Answer
+   Example: print(f"Customer ID: 1002") then say "Customer: 1002"
+
+4. DO NOT change customer IDs between execution and final answer
+
+5. Always Take
+
+**Output Format:**
+Final Answer:
+* **Key Finding:** Value with units
+
+**Remember:** Your Final Answer MUST match your execution output EXACTLY.
+
+**CRITICAL RULE:**
+After executing your Python code, you must ALWAYS copy the precise output values (including all table entries, product IDs, metrics, and result order) from your last print statement or code result DIRECTLY into your Final Answer block. You are STRICTLY FORBIDDEN from making up, reordering, reformatting, or substituting any values in your Final Answer. The content (IDs, counts, values, column order) in your Final Answer MUST MATCH the actual code output EXACTLY. If the output is a table or DataFrame, convert it to a Markdown table with the same rows, columns, and values—no changes allowed. If any mismatch occurs, it will be treated as a critical error.
+If in doubt: the Final Answer = last code output, faithfully converted to Markdown if needed, nothing else.
+
+**CRITICAL EXECUTION RULE:**
+After you run your Python code and get the result, you MUST immediately provide a Final Answer.
+DO NOT re-execute the same code multiple times.
+If you have the answer, stop immediately and format it.
+
+**Example Flow:**
+1. Action: python_repl_ast
+   Action Input: [code]
+2. Observation: [result]
+3. Thought: I now have the answer
+4. Final Answer: [formatted result]
+
+**NEVER repeat the same Action more than once.**
+"""
+        
+        return prefix
+
+
+    # ===========================
+    # ANOMALY-SPECIFIC METHODS
+    # ===========================
+    
+    def _handle_anomaly_query(self, query: str) -> Dict[str, Any]:
+        """Handle queries specifically about anomalies"""
+        
+        logger.info("="*60)
+        logger.info("🚨 ANOMALY QUERY DETECTED")
+        logger.info("="*60)
+        
+        # Check if anomalies were detected
+        anomaly_df = mcp_store.get_enriched_data('anomaly_records')
+        
+        if anomaly_df is None or len(anomaly_df) == 0:
+            logger.warning("⚠️ No anomalies detected yet")
+            return {
+                "status": "error",
+                "analysis_type": "anomaly",
+                "results": {
+                    "llm_raw": "* **Status:** No anomalies detected yet\n* **Action:** Please run anomaly detection first"
+                }
+            }
+        
+        logger.info(f"✅ Found {len(anomaly_df)} anomalies in storage")
+        
+        query_lower = query.lower()
+        
+        # PATTERN 1: Which customer has most anomalies?
+        if 'customer' in query_lower and any(word in query_lower for word in ['most', 'highest', 'max', 'top']):
+            logger.info("🎯 Pattern: Customer with most anomalies")
+            
+            customer_counts = anomaly_df['SoldToParty'].value_counts()
+            
+            if len(customer_counts) == 0:
+                result_text = "* **Status:** No customer anomalies found"
+            else:
+                top_customer = customer_counts.index[0]
+                count = customer_counts.iloc[0]
+                
+                # Get top reasons for this customer
+                customer_anomalies = anomaly_df[anomaly_df['SoldToParty'] == top_customer]
+                top_reasons = customer_anomalies['anomaly_reason'].value_counts().head(3)
+                reasons_text = "\n".join([f"  - {reason} ({cnt}x)" for reason, cnt in top_reasons.items()])
+                
+                result_text = (
+                    f"* **Customer with Most Anomalies:** {top_customer}\n"
+                    f"* **Total Anomalies:** {count}\n"
+                    f"* **Common Reasons:**\n{reasons_text}"
+                )
+            
+            extracted_entities = {
+                "customer_id": str(top_customer) if len(customer_counts) > 0 else None,
+                "metric": "anomaly_count",
+                "metric_value": int(count) if len(customer_counts) > 0 else 0
+            }
+            
+            mcp_store.update_agent_context(self.name, {
+                "analysis_type": "anomaly_customer",
+                "results": {"llm_raw": result_text},
+                "query": query,
+                "extracted_entities": extracted_entities
+            })
+            
+            mcp_store.update_dialogue_state(extracted_entities, query, result_text)
+            
+            return {
+                "status": "success",
+                "analysis_type": "anomaly_customer",
+                "results": {"llm_raw": result_text}
+            }
+        
+        # PATTERN 2: Show me anomalies for specific customer
+        customer_match = re.search(r'customer\s+(\d+)', query_lower)
+        if customer_match and 'anomal' in query_lower:
+            customer_id = customer_match.group(1)
+            logger.info(f"🎯 Pattern: Anomalies for customer {customer_id}")
+            
+            customer_anomalies = anomaly_df[anomaly_df['SoldToParty'] == customer_id]
+            
+            if len(customer_anomalies) == 0:
+                result_text = f"* **Customer:** {customer_id}\n* **Status:** No anomalies found for this customer"
+            else:
+                # Sort by severity (anomaly_score ascending = more severe first)
+                customer_anomalies = customer_anomalies.nsmallest(10, 'anomaly_score')
+                
+                result_text = f"* **Customer:** {customer_id}\n* **Total Anomalies:** {len(customer_anomalies)}\n\n**Top Anomalies:**\n"
+                
+                for idx, row in customer_anomalies.head(5).iterrows():
+                    result_text += f"\n{idx+1}. **${row['NetAmount']:,.0f}** - {row['anomaly_reason']}"
+            
+            extracted_entities = {
+                "customer_id": customer_id,
+                "metric": "anomalies",
+                "metric_value": len(customer_anomalies)
+            }
+            
+            mcp_store.update_agent_context(self.name, {
+                "analysis_type": "customer_anomalies",
+                "results": {"llm_raw": result_text},
+                "query": query,
+                "extracted_entities": extracted_entities
+            })
+            
+            mcp_store.update_dialogue_state(extracted_entities, query, result_text)
+            
+            return {
+                "status": "success",
+                "analysis_type": "customer_anomalies",
+                "results": {"llm_raw": result_text}
+            }
+        
+        # PATTERN 3: General anomaly summary
+        if any(word in query_lower for word in ['show', 'list', 'what are', 'summarize', 'summary']):
+            logger.info("🎯 Pattern: General anomaly summary")
+            
+            # Get top anomalies by severity
+            top_anomalies = anomaly_df.nsmallest(10, 'anomaly_score')
+            
+            # Get category distribution
+            anomaly_df['reason_category'] = anomaly_df['anomaly_reason'].apply(self._categorize_anomaly_reason)
+            category_counts = anomaly_df['reason_category'].value_counts()
+            
+            result_text = f"* **Total Anomalies:** {len(anomaly_df)}\n\n"
+            result_text += "**By Category:**\n"
+            for category, count in category_counts.head(5).items():
+                result_text += f"  - {category}: {count}\n"
+            
+            result_text += "\n**Most Severe Anomalies:**\n"
+            for idx, row in top_anomalies.head(5).iterrows():
+                result_text += f"\n{idx+1}. Customer {row['SoldToParty']} - **${row['NetAmount']:,.0f}**\n   {row['anomaly_reason']}"
+            
+            mcp_store.update_agent_context(self.name, {
+                "analysis_type": "anomaly_summary",
+                "results": {"llm_raw": result_text},
+                "query": query
+            })
+            
+            mcp_store.update_dialogue_state({}, query, result_text)
+            
+            return {
+                "status": "success",
+                "analysis_type": "anomaly_summary",
+                "results": {"llm_raw": result_text}
+            }
+        
+        # FALLBACK: Use LLM agent with anomaly-enriched dataframe
+        logger.info("🎯 Using LLM agent for complex anomaly query")
+        return self._llm_analysis(query)
+
+
+    def _categorize_anomaly_reason(self, reason: str) -> str:
+        """Categorize anomaly reason for summary"""
+        if reason is None or not isinstance(reason, str):
+            return "Unknown"
+        
+        reason_lower = reason.lower()
+        
+        if "revenue" in reason_lower and "higher" in reason_lower:
+            return "High Revenue"
+        elif "revenue" in reason_lower and "lower" in reason_lower:
+            return "Low Revenue"
+        elif "quantity" in reason_lower and "higher" in reason_lower:
+            return "High Quantity"
+        elif "quantity" in reason_lower and "lower" in reason_lower:
+            return "Low Quantity"
+        elif "tax" in reason_lower:
+            return "Tax Anomaly"
+        elif "cost" in reason_lower:
+            return "Cost Anomaly"
+        else:
+            return "Multi-Factor"
+
 
     # ===========================
     # DEDICATED CUSTOMER METHODS (100% ACCURATE)
@@ -186,12 +432,14 @@ If in doubt: the Final Answer = last code output, faithfully converted to Markdo
         
         return customer_revenue
 
+
     # ===========================
-    # MAIN EXECUTION WITH FLEXIBLE PATTERN DETECTION
+    # MAIN EXECUTION WITH PATTERN DETECTION
     # ===========================
 
+
     def execute(self, query: str, analysis_type: str = "summary", entities: dict = None) -> Dict[str, Any]:
-        """Main execution with flexible pattern detection (no question word required)"""
+        """Main execution with flexible pattern detection"""
         logger.info(f"[{self.name}] Received query: '{query}' | type={analysis_type} | entities={entities}")
         
         try:
@@ -202,9 +450,11 @@ If in doubt: the Final Answer = last code output, faithfully converted to Markdo
             logger.info("🔍 QUERY PATTERN DETECTION")
             logger.info("="*60)
             logger.info(f"Query: {query}")
-            logger.info(f"  'customer' in query: {'customer' in query_lower}")
-            logger.info(f"  'highest/max/top' in query: {any(word in query_lower for word in ['highest', 'max', 'maximum', 'top', 'most', 'best', 'largest', 'greatest'])}")
-            logger.info(f"  'revenue/sales' in query: {('revenue' in query_lower or 'sales' in query_lower)}")
+            
+            # ✅ PATTERN 0: Anomaly-related query (NEW!)
+            if 'anomal' in query_lower:
+                logger.info("✅ PATTERN MATCHED: Anomaly query")
+                return self._handle_anomaly_query(query)
             
             # ✅ PATTERN 1: Specific customer revenue query
             customer_match = re.search(r'customer\s+(\d+)', query_lower)
@@ -251,13 +501,13 @@ If in doubt: the Final Answer = last code output, faithfully converted to Markdo
                 
                 return result
             
-            # ✅ PATTERN 2: Top/highest/max customer query (FLEXIBLE - no question word required)
+            # ✅ PATTERN 2: Top/highest/max customer query
             if 'customer' in query_lower and \
                ('highest' in query_lower or 'most' in query_lower or 'top' in query_lower or \
                 'max' in query_lower or 'maximum' in query_lower or 'largest' in query_lower or \
                 'best' in query_lower or 'greatest' in query_lower) and \
                ('revenue' in query_lower or 'sales' in query_lower):
-                logger.info(f"✅ PATTERN MATCHED: Top customer query (flexible match)")
+                logger.info(f"✅ PATTERN MATCHED: Top customer query")
                 logger.info("🎯 Using dedicated method (bypassing LLM)")
                 logger.info("="*60)
                 
@@ -314,7 +564,6 @@ If in doubt: the Final Answer = last code output, faithfully converted to Markdo
                 all_entities = {**(entities or {}), **extracted_entities}
                 
                 logger.info(f"[{self.name}] Extracted entities: {extracted_entities}")
-                logger.info(f"[{self.name}] All entities: {all_entities}")
                 
                 mcp_store.update_agent_context(self.name, {
                     "analysis_type": "llm_analysis",
@@ -346,6 +595,7 @@ If in doubt: the Final Answer = last code output, faithfully converted to Markdo
         except Exception as e:
             logger.error(f"[{self.name}] ERROR: {e}", exc_info=True)
             return {"status": "error", "message": str(e)}
+
 
     def _llm_analysis(self, query: str) -> Dict[str, Any]:
         """Use LLM agent with hallucination detection and correction"""
@@ -513,6 +763,7 @@ If in doubt: the Final Answer = last code output, faithfully converted to Markdo
                 "results": {"error": f"Analysis failed: {str(e)}"}
             }
 
+
     def _extract_entities_dynamically(self, llm_output: str, query: str) -> dict:
         """Use LLM to extract entities"""
         if not self.entity_extractor_llm:
@@ -551,6 +802,7 @@ Example: {{"customer_id": "1002", "metric": "revenue"}}"""
             logger.error(f"[Entity Extraction] Failed: {e}")
             return self._extract_entities_regex_fallback(llm_output)
 
+
     def _extract_entities_regex_fallback(self, llm_output: str) -> dict:
         """Regex fallback for entity extraction"""
         entities = {}
@@ -576,11 +828,12 @@ Example: {{"customer_id": "1002", "metric": "revenue"}}"""
         if year_match:
             entities['year'] = int(year_match.group(1))
         
-        metric_match = re.search(r'(revenue|sales|orders)', llm_output, re.IGNORECASE)
+        metric_match = re.search(r'(revenue|sales|orders|anomal)', llm_output, re.IGNORECASE)
         if metric_match:
             entities['metric'] = metric_match.group(1).lower()
         
         return entities
+
 
     def _extract_clean_response(self, llm_raw: str) -> str:
         """Clean response for display"""
@@ -601,6 +854,7 @@ Example: {{"customer_id": "1002", "metric": "revenue"}}"""
             return '\n'.join(answer_lines)
         
         return cleaned[:1000] if cleaned else llm_raw[:1000]
+
 
     def _summary_analysis(self, df: pd.DataFrame, query: str, entities: dict = None) -> Dict[str, Any]:
         """Fallback summary"""
@@ -623,6 +877,7 @@ Example: {{"customer_id": "1002", "metric": "revenue"}}"""
             }
         except Exception as e:
             return {"status": "error", "message": str(e)}
+
 
     def execute_comparison(self, query: str, years: list) -> Dict[str, Any]:
         """Execute comparison"""
@@ -668,51 +923,3 @@ Example: {{"customer_id": "1002", "metric": "revenue"}}"""
         except Exception as e:
             logger.error(f"Comparison error: {e}", exc_info=True)
             return {"status": "error", "message": str(e)}
-
-
-# ===========================
-# TESTING
-# ===========================
-if __name__ == "__main__":
-    import logging
-    logging.basicConfig(level=logging.INFO, format='%(levelname)s:%(name)s:%(message)s')
-    
-    print("\n" + "="*60)
-    print("TESTING ANALYSIS AGENT")
-    print("="*60 + "\n")
-    
-    agent = AnalysisAgent()
-    
-    if agent.llm_agent:
-        print("✅ LLM Agent initialized successfully!")
-    else:
-        print("❌ LLM Agent initialization failed!")
-    
-    print("\n" + "="*60)
-    print("TOP 10 CUSTOMERS BY REVENUE (ACTUAL DATA)")
-    print("="*60)
-    
-    df = mcp_store.get_sales_data()
-    top_10 = df.groupby('SoldToParty')['NetAmount'].sum().sort_values(ascending=False).head(10)
-    
-    for idx, (customer, revenue) in enumerate(top_10.items(), 1):
-        print(f"{idx:2d}. Customer {customer}: ${revenue:,.2f}")
-    
-    print("\n" + "="*60)
-    print("TESTING PATTERN DETECTION")
-    print("="*60)
-    
-    test_queries = [
-        "which customer has highest revenue?",
-        "customer with highest revenue?",
-        "Highest Revenue Customer??",
-        "show max revenue customer",
-        "top customer by sales"
-    ]
-    
-    for test_query in test_queries:
-        print(f"\n📝 Query: {test_query}")
-        result = agent.execute(test_query, "summary", {})
-        print(f"✅ Result: {result.get('results', {}).get('llm_raw', '')[:100]}")
-    
-    print("\n" + "="*60 + "\n")

@@ -42,6 +42,13 @@ class DashboardAgent:
         self.analysis_agent_ref = None
         self.chart_data_cache = {}
         
+        # Column mappings for flexibility
+        self.date_column = None
+        self.revenue_column = None
+        self.customer_column = None
+        self.product_column = None
+        self.sales_org_column = None
+        
         if not MATPLOTLIB_AVAILABLE:
             logger.error("[DashboardAgent] Matplotlib not available!")
             return
@@ -59,6 +66,45 @@ class DashboardAgent:
         except Exception as e:
             logger.warning(f"[DashboardAgent] Could not initialize LLM: {e}")
     
+    def _detect_columns(self, df: pd.DataFrame):
+        """Dynamically detect column names"""
+        # Date column
+        date_candidates = ['Date', 'CreationDate', 'SalesDocumentDate', 'TransactionDate']
+        for col in date_candidates:
+            if col in df.columns:
+                self.date_column = col
+                break
+        
+        # Revenue column
+        revenue_candidates = ['Revenue', 'NetAmount', 'Sales', 'TotalSales']
+        for col in revenue_candidates:
+            if col in df.columns:
+                self.revenue_column = col
+                break
+        
+        # Customer column
+        customer_candidates = ['Customer', 'SoldToParty', 'CustomerID']
+        for col in customer_candidates:
+            if col in df.columns:
+                self.customer_column = col
+                break
+        
+        # Product column
+        product_candidates = ['Product', 'ProductID', 'Material']
+        for col in product_candidates:
+            if col in df.columns:
+                self.product_column = col
+                break
+        
+        # Sales Org column
+        sales_org_candidates = ['Sales Org', 'SalesOrganization', 'SalesOrg']
+        for col in sales_org_candidates:
+            if col in df.columns:
+                self.sales_org_column = col
+                break
+        
+        logger.info(f"[Column Detection] Date: {self.date_column}, Revenue: {self.revenue_column}, Customer: {self.customer_column}, Product: {self.product_column}")
+    
     def execute(self, query: str, entities: dict = None, analysis_agent=None) -> Dict[str, Any]:
         """Main execution method - LLM-driven"""
         logger.info(f"[{self.name}] 🎯 Received query: '{query}' | entities={entities}")
@@ -73,8 +119,10 @@ class DashboardAgent:
             self.analysis_agent_ref = analysis_agent
             self.chart_data_cache = {}
             
-            # Get data
+            # Get data and detect columns
             df = mcp_store.get_sales_data()
+            self._detect_columns(df)
+            
             resolved_entities = self._resolve_dashboard_context(query, entities)
             
             logger.info(f"[{self.name}] Final entities: {resolved_entities}")
@@ -194,7 +242,6 @@ class DashboardAgent:
         # ✅ Default: Return empty for new standalone queries
         logger.info(f"✅ New standalone query - no entity filters applied")
         return {}
-
     
     def _is_comparison_query(self, query_lower: str) -> bool:
         return any(kw in query_lower for kw in ['comparison', 'compare', 'vs', 'versus', 'difference between', 'contrast'])
@@ -231,49 +278,51 @@ class DashboardAgent:
         return {k: v for k, v in entities.items() if k in DASHBOARD_KEYS and v}
     
     def _filter_dataframe(self, df: pd.DataFrame, entities: dict) -> pd.DataFrame:
-        """Filter dataframe based on entities - handles both single values and lists"""
+        """Filter dataframe based on entities - DYNAMICALLY USES DETECTED COLUMNS"""
         filtered = df.copy()
+        
+        # Ensure date column is datetime
+        if self.date_column and self.date_column in filtered.columns:
+            filtered[self.date_column] = pd.to_datetime(filtered[self.date_column], errors='coerce')
         
         if entities.get('is_comparison'):
             comparison_dim = entities.get('comparison_dimension')
             comparison_values = entities.get('comparison_values', [])
             
-            if comparison_dim == 'year' and comparison_values:
+            if comparison_dim == 'year' and comparison_values and self.date_column:
                 years_int = [int(y) if isinstance(y, str) else y for y in comparison_values]
-                filtered = filtered[filtered['CreationDate'].dt.year.isin(years_int)]
+                filtered = filtered[filtered[self.date_column].dt.year.isin(years_int)]
         else:
-            # ✅ Handle year filtering
-            if 'year' in entities:
+            # ✅ Handle year filtering (DYNAMIC)
+            if 'year' in entities and self.date_column:
                 year_int = int(entities['year']) if isinstance(entities['year'], str) else entities['year']
-                filtered = filtered[filtered['CreationDate'].dt.year == year_int]
+                filtered = filtered[filtered[self.date_column].dt.year == year_int]
             
-            # ✅ Handle customer_id filtering (single or list)
-            if 'customer_id' in entities:
+            # ✅ Handle customer_id filtering (DYNAMIC)
+            if 'customer_id' in entities and self.customer_column:
                 customer_id = entities['customer_id']
                 if isinstance(customer_id, list):
-                    # Convert all to strings for comparison
                     customer_id_str = [str(c) for c in customer_id]
-                    filtered = filtered[filtered['SoldToParty'].isin(customer_id_str)]
+                    filtered = filtered[filtered[self.customer_column].isin(customer_id_str)]
                     logger.info(f"[Filter] Filtering by customer_id list: {customer_id_str}")
                 else:
-                    filtered = filtered[filtered['SoldToParty'] == str(customer_id)]
+                    filtered = filtered[filtered[self.customer_column] == str(customer_id)]
                     logger.info(f"[Filter] Filtering by customer_id: {customer_id}")
             
-            # ✅ Handle product_id filtering (single or list)
-            if 'product_id' in entities:
+            # ✅ Handle product_id filtering (DYNAMIC)
+            if 'product_id' in entities and self.product_column:
                 product_id = entities['product_id']
                 if isinstance(product_id, list):
-                    # Convert all to strings for comparison
                     product_id_str = [str(p) for p in product_id]
-                    filtered = filtered[filtered['Product'].isin(product_id_str)]
+                    filtered = filtered[filtered[self.product_column].isin(product_id_str)]
                     logger.info(f"[Filter] Filtering by product_id list: {product_id_str}")
                 else:
-                    filtered = filtered[filtered['Product'] == str(product_id)]
+                    filtered = filtered[filtered[self.product_column] == str(product_id)]
                     logger.info(f"[Filter] Filtering by product_id: {product_id}")
             
-            # ✅ Handle sales_org filtering
-            if 'sales_org' in entities:
-                filtered = filtered[filtered['SalesOrganization'] == str(entities['sales_org'])]
+            # ✅ Handle sales_org filtering (DYNAMIC)
+            if 'sales_org' in entities and self.sales_org_column:
+                filtered = filtered[filtered[self.sales_org_column] == str(entities['sales_org'])]
                 logger.info(f"[Filter] Filtering by sales_org: {entities['sales_org']}")
         
         logger.info(f"[Filter] {len(df)} → {len(filtered)} rows")
@@ -900,13 +949,17 @@ RECOMMENDATIONS:
         }
     
     def _generate_chart_insights(self, charts: List[Dict]) -> List[str]:
-        """Generate insights for each chart"""
+        """Generate dynamic insights for each chart using LLM"""
         insights = []
+        
+        if not self.llm:
+            # Fallback to descriptions
+            return [chart.get('config', {}).get('description', 'Analysis') for chart in charts]
         
         for chart_data in charts:
             chart_key = chart_data.get('chart_key')
             config = chart_data.get('config', {})
-            title = chart_data.get('title', 'Chart')
+            title = config.get('title', 'Chart')
             
             try:
                 cached_data = self.chart_data_cache.get(chart_key)
@@ -915,24 +968,56 @@ RECOMMENDATIONS:
                     insights.append("Data unavailable")
                     continue
                 
-                df_agg = cached_data['data']
+                df_chart = cached_data['data']
                 y_col = config.get('y_column')
                 
-                # Simple insight generation
-                if len(df_agg) > 0:
-                    max_val = df_agg[y_col].max()
-                    min_val = df_agg[y_col].min()
-                    avg_val = df_agg[y_col].mean()
-                    
-                    insights.append(f"{title}: Range from {min_val:,.0f} to {max_val:,.0f}, Average: {avg_val:,.0f}")
-                else:
-                    insights.append("No data")
+                if len(df_chart) == 0:
+                    insights.append("No data available for this visualization")
+                    continue
+                
+                # Prepare data summary for LLM
+                data_summary = f"""
+    Chart: {title}
+    Data points: {len(df_chart)}
+    Metric: {y_col}
+    Min: {df_chart[y_col].min():,.2f}
+    Max: {df_chart[y_col].max():,.2f}
+    Average: {df_chart[y_col].mean():,.2f}
+    """
+                
+                # Get top/bottom values if applicable
+                if len(df_chart) > 3:
+                    x_col = config.get('x_column')
+                    top_3 = df_chart.nlargest(3, y_col)
+                    data_summary += f"\nTop 3 values:\n"
+                    for idx, row in top_3.iterrows():
+                        data_summary += f"  - {row[x_col]}: {row[y_col]:,.2f}\n"
+                
+                # Ask LLM for insight
+                prompt = f"""Provide a 1-sentence business insight (max 25 words) for this chart data:
+
+    {data_summary}
+
+    Focus on: trends, patterns, outliers, or actionable observations.
+    Be specific and concise. No generic statements."""
+
+                response = self.llm.invoke(prompt)
+                insight = response.content.strip()
+                
+                # Clean up response
+                insight = insight.replace('\n', ' ').strip()
+                if len(insight) > 200:
+                    insight = insight[:197] + "..."
+                
+                insights.append(insight)
                 
             except Exception as e:
-                logger.error(f"[Insight] Error: {e}")
-                insights.append(f"Analysis of {title}")
+                logger.error(f"[Chart Insight] Error: {e}")
+                # Fallback to description
+                insights.append(config.get('description', f"Analysis of {title}"))
         
         return insights
+
     
     def _extract_section(self, text: str, start: str, end: str = None) -> str:
         try:
