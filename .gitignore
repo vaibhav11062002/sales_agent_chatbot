@@ -2,7 +2,9 @@ __pycache__/config.cpython-313.pyc
 __pycache__/*
 layer3_agents/__pycache__/*
 .env
-
-
-.env
-.env
+requirements.txt
+dashboards/*
+uv.lock
+requirements.txt
+README.md
+pages/__pycache__/*
