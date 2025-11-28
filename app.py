@@ -1,5 +1,4 @@
-from layer1_ui import SalesAgentChatbot
+from pages.landing_page import render_landing_page
 
 if __name__ == "__main__":
-    chatbot = SalesAgentChatbot()
-    chatbot.run()
+    render_landing_page()

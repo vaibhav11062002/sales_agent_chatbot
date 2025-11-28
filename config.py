@@ -5,7 +5,7 @@ from datetime import datetime
 import os
 
 # Gemini API Configuration
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "Your Key")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "AIzaSyAsaqUkDY7IuFc12P9a7jBmJER9i2ft3BE")
 
 # Database Configuration
 DB_CONFIG = {
