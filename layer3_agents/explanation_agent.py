@@ -142,7 +142,7 @@ Generate a concise, insightful explanation:
             mcp_store.update_agent_context(self.name, {
                 "query": query,
                 "explanation": explanation,
-                "sources_used": list(all_contexts.keys())
+                "sources_used": [ctx.get('agent_name') for ctx in all_contexts if ctx.get('agent_name')]
             })
             
             return {

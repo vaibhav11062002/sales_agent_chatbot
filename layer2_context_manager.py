@@ -9,7 +9,9 @@ from typing import Dict, Any, Optional, List
 from data_connector import mcp_store
 from config import GEMINI_API_KEY
 
+
 logger = logging.getLogger(__name__)
+
 
 class ContextManager:
     """Dynamic context manager using LLM for entity resolution and semantic matching"""
@@ -70,7 +72,7 @@ class ContextManager:
             logger.info(f"📏 Best match similarity: {similarity_score:.2f}")
             logger.info(f"   └─ Matched query: '{best_match['query']}'")
             
-            if similarity_score > 0.6:
+            if similarity_score > 0.85:
                 logger.info(f"✅ CACHE HIT: High similarity match")
                 return {
                     "from_cache": True,
@@ -98,10 +100,11 @@ class ContextManager:
                 for i, ctx in enumerate(context_stack[:5])
             ])
             
+            # ✅ FIXED: Enhanced prompt with explicit JSON formatting rules
             prompt = f"""You are a context resolution assistant. Determine if a new query can be answered using past contexts.
 
 **Current Query:** "{query}"
-**Current Entities:** {entities}
+**Current Entities:** {json.dumps(entities)}
 
 **Past Contexts:**
 {context_summary}
@@ -111,51 +114,56 @@ class ContextManager:
 2. "total sales 2024" ≠ "total sales 2025" (different years!)
 3. "customer 1002" ≠ "customer 1003" (different customers!)
 4. "product OX140" ≠ "product OX141" (different products!)
-5. Check if pronouns or references (like "that", "it", "those") refer to entities from past contexts
+5. Check if pronouns or references (like "that", "it", "those", "this customer") refer to entities from past contexts
 6. Only reuse if asking about EXACTLY the same data
 
-**Response Format (JSON only, no markdown):**
+**Response Format (STRICTLY JSON - NO MARKDOWN, NO TRAILING COMMAS):**
 {{
-  "can_reuse": true/false,
-  "matched_context_index": <1-5 or null>,
-  "reasoning": "why or why not",
-  "resolved_entities": {{"entity": "value"}}
+  "can_reuse": true,
+  "matched_context_index": 1,
+  "reasoning": "brief explanation",
+  "resolved_entities": {{"customer_id": "1002"}}
 }}
 
-Analyze carefully and respond with JSON only."""
+**IMPORTANT JSON RULES:**
+- Return ONLY valid JSON (no markdown code blocks)
+- No trailing commas before closing braces
+- All string values must be quoted
+- Boolean values: true or false (lowercase, no quotes)
+- Numbers: no quotes unless representing IDs
+
+Analyze carefully and respond with ONLY the JSON object."""
 
             response = self.llm.invoke(prompt)
             content = response.content
             
-            # Parse LLM response
-            json_match = re.search(r'\{[^}]+\}', content, re.DOTALL)
-            if json_match:
-                result = json.loads(json_match.group())
-                
-                if result.get('can_reuse') and result.get('matched_context_index'):
-                    idx = result['matched_context_index'] - 1
-                    if 0 <= idx < len(context_stack):
-                        matched_ctx = context_stack[idx]
-                        
-                        # Double-check: Verify entities match
-                        matched_entities = matched_ctx.get('entities', {})
-                        if not self._entities_compatible(entities, matched_entities):
-                            logger.info(f"   ❌ LLM suggested reuse but entities don't match - rejecting")
-                            return None
-                        
-                        logger.info(f"✅ LLM matched context #{idx+1}")
-                        logger.info(f"   └─ Reasoning: {result.get('reasoning', 'N/A')}")
-                        
-                        # Fetch full response
-                        full_response = self._get_full_response_for_context(matched_ctx)
-                        
-                        return {
-                            "from_cache": True,
-                            "response": full_response or matched_ctx['response'],
-                            "cached_query": matched_ctx['query'],
-                            "llm_reasoning": result.get('reasoning'),
-                            "resolved_entities": result.get('resolved_entities', {})
-                        }
+            # ✅ FIXED: Enhanced JSON parsing with multiple strategies
+            result = self._parse_llm_json(content)
+            
+            if result and result.get('can_reuse') and result.get('matched_context_index'):
+                idx = result['matched_context_index'] - 1
+                if 0 <= idx < len(context_stack):
+                    matched_ctx = context_stack[idx]
+                    
+                    # Double-check: Verify entities match
+                    matched_entities = matched_ctx.get('entities', {})
+                    if not self._entities_compatible(entities, matched_entities):
+                        logger.info(f"   ❌ LLM suggested reuse but entities don't match - rejecting")
+                        return None
+                    
+                    logger.info(f"✅ LLM matched context #{idx+1}")
+                    logger.info(f"   └─ Reasoning: {result.get('reasoning', 'N/A')}")
+                    
+                    # Fetch full response
+                    full_response = self._get_full_response_for_context(matched_ctx)
+                    
+                    return {
+                        "from_cache": True,
+                        "response": full_response or matched_ctx['response'],
+                        "cached_query": matched_ctx['query'],
+                        "llm_reasoning": result.get('reasoning'),
+                        "resolved_entities": result.get('resolved_entities', {})
+                    }
             
             logger.info("🤖 LLM: No reusable context found")
             return None
@@ -164,20 +172,111 @@ Analyze carefully and respond with JSON only."""
             logger.error(f"LLM context resolution failed: {e}")
             return None
     
+    def _parse_llm_json(self, content: str) -> Optional[Dict[str, Any]]:
+        """
+        ✅ FIXED: Parse JSON from LLM response with robust error handling
+        """
+        # Strategy 1: Try direct JSON parse
+        try:
+            return json.loads(content)
+        except json.JSONDecodeError:
+            logger.debug("Strategy 1 failed: Not direct JSON")
+        
+        # Strategy 2: Extract JSON from markdown code blocks
+        json_match = re.search(r'``````', content, re.DOTALL)
+        if json_match:
+            try:
+                json_str = json_match.group(1)
+                # Clean trailing commas
+                json_str = re.sub(r',\s*}', '}', json_str)
+                json_str = re.sub(r',\s*]', ']', json_str)
+                result = json.loads(json_str)
+                logger.info("✅ Strategy 2 SUCCESS: Found JSON in code block")
+                return result
+            except json.JSONDecodeError as e:
+                logger.debug(f"Strategy 2 failed: {e}")
+        
+        # Strategy 3: Find raw JSON object with nested support
+        json_match = re.search(r'\{(?:[^{}]|(?:\{[^{}]*\}))*\}', content, re.DOTALL)
+        if json_match:
+            try:
+                json_str = json_match.group()
+                # Clean trailing commas before closing braces/brackets
+                json_str = re.sub(r',\s*}', '}', json_str)
+                json_str = re.sub(r',\s*]', ']', json_str)
+                result = json.loads(json_str)
+                logger.info("✅ Strategy 3 SUCCESS: Found raw JSON object")
+                return result
+            except json.JSONDecodeError as e:
+                logger.debug(f"Strategy 3 failed: {e}")
+        
+        # Strategy 4: Extract key fields manually as fallback
+        try:
+            can_reuse_match = re.search(r'"can_reuse":\s*(true|false)', content, re.IGNORECASE)
+            index_match = re.search(r'"matched_context_index":\s*(\d+|null)', content)
+            reasoning_match = re.search(r'"reasoning":\s*"([^"]*)"', content)
+            
+            if can_reuse_match:
+                result = {
+                    "can_reuse": can_reuse_match.group(1).lower() == 'true',
+                    "matched_context_index": int(index_match.group(1)) if index_match and index_match.group(1) != 'null' else None,
+                    "reasoning": reasoning_match.group(1) if reasoning_match else "Extracted via regex",
+                    "resolved_entities": {}
+                }
+                
+                # Try to extract resolved_entities
+                entities_match = re.search(r'"resolved_entities":\s*(\{[^}]*\})', content)
+                if entities_match:
+                    try:
+                        entities_str = entities_match.group(1)
+                        entities_str = re.sub(r',\s*}', '}', entities_str)
+                        result["resolved_entities"] = json.loads(entities_str)
+                    except:
+                        pass
+                
+                logger.info("✅ Strategy 4 SUCCESS: Extracted key fields via regex")
+                return result
+        except Exception as e:
+            logger.debug(f"Strategy 4 failed: {e}")
+        
+        logger.error("❌ All JSON extraction strategies failed")
+        logger.debug(f"Raw LLM content: {content[:500]}")
+        return None
+    
     def _entities_compatible(self, entities1: dict, entities2: dict) -> bool:
         """
-        Check if two entity sets are compatible (no critical mismatches).
-        Returns False if any critical entity has different values.
+        ✅ FIXED: Check if two entity sets are compatible (same filters)
+        Handles None values properly.
         """
-        critical_keys = ['year', 'customer_id', 'product_id', 'sales_org']
+        # ✅ FIX: Handle None entities
+        if entities1 is None:
+            entities1 = {}
+        if entities2 is None:
+            entities2 = {}
         
-        for key in critical_keys:
+        # Empty entities are compatible
+        if not entities1 and not entities2:
+            return True
+        
+        # Check key overlap
+        keys1 = set(entities1.keys())
+        keys2 = set(entities2.keys())
+        
+        # If no overlapping keys, they're compatible (no conflicts)
+        common_keys = keys1 & keys2
+        if not common_keys:
+            return True  # ✅ Changed from False to True
+        
+        # Check if values match for common keys
+        for key in common_keys:
             val1 = entities1.get(key)
             val2 = entities2.get(key)
             
-            # If both have this key but values differ → incompatible
-            if val1 is not None and val2 is not None and str(val1) != str(val2):
-                logger.info(f"   ❌ Entity incompatibility: {key} ({val1} ≠ {val2})")
+            # Handle list comparisons
+            if isinstance(val1, list) and isinstance(val2, list):
+                if set(val1) != set(val2):
+                    return False
+            elif val1 != val2:
                 return False
         
         return True
@@ -246,20 +345,32 @@ Analyze carefully and respond with JSON only."""
         
         return similarity
     
-    def _dynamic_agent_context_search(self, query: str, entities: dict, all_contexts: dict) -> Optional[Dict[str, Any]]:
-        """Dynamically search agent contexts with entity validation"""
+    def _dynamic_agent_context_search(
+        self,
+        query: str,
+        entities: dict,
+        all_contexts: List[dict]  # ✅ Now it's a list of dicts
+    ) -> Optional[Dict[str, Any]]:
+        """
+        ✅ FIXED: Dynamically search agent contexts with entity validation
+        Now handles list format from get_all_contexts()
+        """
+        # ✅ FIX: Handle None entities
+        if entities is None:
+            entities = {}
         
-        for agent_name, agent_ctx in all_contexts.items():
-            agent_data = agent_ctx.get('data', {})
+        # Filter to relevant agent contexts
+        relevant_contexts = []
+        
+        # ✅ FIX: all_contexts is now a list of dicts
+        for ctx in all_contexts:
+            agent_name = ctx.get('agent_name', '')
+            past_query = ctx.get('query', '')
+            past_entities = ctx.get('entities')
             
-            past_query = agent_data.get('query', '')
-            
-            # Get past entities from multiple possible locations
-            past_entities = (
-                agent_data.get('filtered_by', {}) or 
-                agent_data.get('extracted_entities', {}) or 
-                agent_data.get('entities', {})
-            )
+            # ✅ FIX: Ensure past_entities is not None
+            if past_entities is None:
+                past_entities = {}
             
             # Check entity compatibility first
             if not self._entities_compatible(entities, past_entities):
@@ -268,18 +379,28 @@ Analyze carefully and respond with JSON only."""
             # Check query similarity
             similarity = self._calculate_query_similarity(query, past_query, entities, past_entities)
             
-            if similarity > 0.5:
+            if similarity > 0.85:
                 logger.info(f"   ✅ Found similar query in {agent_name} (similarity: {similarity:.2f})")
                 
-                results = agent_data.get('results', {})
-                if results.get('status') == 'success':
-                    analysis_results = results.get('results', {})
+                results = ctx.get('results', {})
+                if isinstance(results, dict) and results.get('status') == 'success':
+                    # For AnalysisAgent
+                    if 'results' in results:
+                        analysis_results = results['results']
+                        if 'llm_raw' in analysis_results:
+                            clean_response = self._extract_clean_llm_response(analysis_results['llm_raw'])
+                            return {
+                                "from_cache": True,
+                                "response": clean_response,
+                                "cached_query": past_query,
+                                "similarity": similarity
+                            }
                     
-                    if 'llm_raw' in analysis_results:
-                        clean_response = self._extract_clean_llm_response(analysis_results['llm_raw'])
+                    # For other agents (direct results)
+                    if 'message' in results:
                         return {
                             "from_cache": True,
-                            "response": clean_response,
+                            "response": results['message'],
                             "cached_query": past_query,
                             "similarity": similarity
                         }
@@ -290,15 +411,20 @@ Analyze carefully and respond with JSON only."""
         """Retrieve full response from agent contexts based on matched context"""
         all_contexts = mcp_store.get_all_contexts()
         
-        for agent_name, agent_ctx in all_contexts.items():
-            agent_data = agent_ctx.get('data', {})
-            if agent_data.get('query') == context['query']:
-                results = agent_data.get('results', {})
-                if results.get('status') == 'success':
-                    analysis_results = results.get('results', {})
+        # ✅ FIX: Handle list format
+        for ctx in all_contexts:
+            if ctx.get('query') == context['query']:
+                results = ctx.get('results', {})
+                if isinstance(results, dict) and results.get('status') == 'success':
+                    # For AnalysisAgent
+                    if 'results' in results:
+                        analysis_results = results['results']
+                        if 'llm_raw' in analysis_results:
+                            return self._extract_clean_llm_response(analysis_results['llm_raw'])
                     
-                    if 'llm_raw' in analysis_results:
-                        return self._extract_clean_llm_response(analysis_results['llm_raw'])
+                    # For other agents
+                    if 'message' in results:
+                        return results['message']
         
         return None
     

@@ -3,10 +3,13 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional
 import hashlib
 
+
 import pandas as pd
 from mcp_server.mcp_http_client import read_resource_sync, call_tool_sync
 
+
 logger = logging.getLogger(__name__)
+
 
 
 class MCPBackedDataStore:
@@ -19,6 +22,7 @@ class MCPBackedDataStore:
     - Stores enriched data (e.g., anomalies) in-process
     """
 
+
     def __init__(self):
         self.sales_df: Optional[pd.DataFrame] = None
         self.enriched_data: Dict[str, pd.DataFrame] = {}  # for anomalies, etc.
@@ -26,17 +30,21 @@ class MCPBackedDataStore:
         self.conversation_history: List[Dict[str, Any]] = []
         self.data_timestamp: Optional[datetime] = None
 
+
         self.dialogue_state = {
             "entities": {},
             "context_stack": [],
             "query_results_cache": {}
         }
 
+
         logger.info("✅ MCPBackedDataStore initialized (MCP client mode)")
+
 
     # ===========================
     # DATA LOADING (FROM MCP)
     # ===========================
+
 
     def _fetch_sales_from_mcp(self) -> pd.DataFrame:
         """
@@ -48,10 +56,12 @@ class MCPBackedDataStore:
         logger.info("📡 Fetching sales data from MCP resource 'sales://data'")
         res = read_resource_sync("sales://data")
 
+
         status = res.get("status")
         if status != "success":
             msg = res.get("message", "Unknown error")
             raise RuntimeError(f"MCP resource 'sales://data' not ready: {status} ({msg})")
+
 
         data = res.get("data", [])
         shape = res.get("shape", {})
@@ -59,19 +69,24 @@ class MCPBackedDataStore:
         cols = shape.get("columns", len(data[0]) if data else 0)
         logger.info(f"✅ MCP returned {rows} rows, {cols} columns")
 
+
         df = pd.DataFrame(data)
+
 
         if df.empty:
             logger.warning("⚠️ Empty DataFrame received from MCP")
             return df
 
+
         logger.info(f"📋 Columns received: {list(df.columns)}")
+
 
         # Auto-detect and convert datetime columns
         for col in df.columns:
             if 'date' in col.lower() or 'time' in col.lower():
                 logger.info(f"  🔄 Converting {col} to datetime...")
                 df[col] = pd.to_datetime(df[col], errors="coerce")
+
 
         # Auto-detect and convert numeric columns
         numeric_candidates = ['revenue', 'amount', 'quantity', 'volume', 'price', 
@@ -84,10 +99,12 @@ class MCPBackedDataStore:
                     logger.info(f"  🔄 Converting {col} to numeric...")
                     df[col] = pd.to_numeric(df[col], errors="coerce")
 
+
         logger.info(f"✅ Final DataFrame shape: {df.shape}")
         logger.info(f"✅ Columns: {list(df.columns)}")
         
         return df  # Return ALL columns as-is
+
 
     def load_sales_data(
         self,
@@ -98,6 +115,7 @@ class MCPBackedDataStore:
         """
         Load sales data into this process from MCP.
 
+
         Parameters:
         - force_reload: ignore local cache and re-fetch from MCP resource.
         - auto_trigger_tool: if True and MCP resource is empty, call `load_sales_data` tool once.
@@ -106,6 +124,7 @@ class MCPBackedDataStore:
         if self.sales_df is not None and not force_reload:
             logger.info("📦 Data already loaded in MCPBackedDataStore, using cached DataFrame")
             return
+
 
         try:
             self.sales_df = self._fetch_sales_from_mcp()
@@ -116,22 +135,27 @@ class MCPBackedDataStore:
             if not auto_trigger_tool:
                 raise
 
+
             if connection_params is None:
                 raise RuntimeError("auto_trigger_tool=True but no connection_params provided")
+
 
             logger.info("🔄 Calling MCP tool 'load_sales_data' to populate server data")
             tool_res = call_tool_sync("load_sales_data", {"connection_params": connection_params})
             if tool_res.get("status") != "success":
                 raise RuntimeError(f"load_sales_data tool failed: {tool_res}")
 
+
             # Try again after tool call
             self.sales_df = self._fetch_sales_from_mcp()
             self.data_timestamp = datetime.now()
             logger.info(f"✅ Data loaded from MCP after tool call: {len(self.sales_df)} records")
 
+
     def get_sales_data(self) -> pd.DataFrame:
         """
         Get loaded sales data with ALL columns.
+
 
         - If not yet loaded locally, lazy-fetch from MCP (no auto tool trigger here).
         """
@@ -140,13 +164,16 @@ class MCPBackedDataStore:
             self.load_sales_data(force_reload=False, auto_trigger_tool=False)
         return self.sales_df
 
+
     # ===========================
     # ENRICHED DATA (ANOMALIES, ETC.)
     # ===========================
 
+
     def set_enriched_data(self, key: str, data: pd.DataFrame):
         """
         Store enriched data in-process.
+
 
         Example keys:
         - 'anomalies'        -> full DF with is_anomaly, anomaly_score, anomaly_reason
@@ -155,33 +182,75 @@ class MCPBackedDataStore:
         self.enriched_data[key] = data
         logger.info(f"✅ Enriched data stored: '{key}' ({len(data)} rows)")
 
+
     def get_enriched_data(self, key: str) -> Optional[pd.DataFrame]:
         """
         Retrieve enriched data by key.
         """
         return self.enriched_data.get(key)
 
+
     # ===========================
     # AGENT CONTEXT MANAGEMENT
     # ===========================
 
+
     def update_agent_context(self, agent_name: str, context: dict):
+        """
+        ✅ FIXED: Store context data directly, preserving all fields.
+        
+        Args:
+            agent_name: Name of the agent
+            context: Full context dict with query, entities, results, etc.
+        """
+        # 🐛 DEBUG: Log what we're receiving
+        logger.info(f"🐛 DEBUG [update_agent_context] - Received for {agent_name}:")
+        logger.info(f"🐛 DEBUG [update_agent_context] -   context keys: {list(context.keys())}")
+        logger.info(f"🐛 DEBUG [update_agent_context] -   query: {context.get('query')}")
+        logger.info(f"🐛 DEBUG [update_agent_context] -   entities: {context.get('entities')}")
+        logger.info(f"🐛 DEBUG [update_agent_context] -   entities type: {type(context.get('entities'))}")
+        
+        # ✅ FIX: Store the ENTIRE context dict, not just selected fields
+        # The old code was extracting fields and potentially losing data
         self.agent_contexts[agent_name] = {
-            "data": context,
+            **context,  # ✅ Preserve ALL fields from context
             "timestamp": datetime.now().isoformat(),
-            "agent": agent_name
+            "agent_name": agent_name  # Add agent_name for reference
         }
+        
+        # 🐛 DEBUG: Verify what was stored
+        stored = self.agent_contexts[agent_name]
+        logger.info(f"🐛 DEBUG [update_agent_context] - Stored in agent_contexts:")
+        logger.info(f"🐛 DEBUG [update_agent_context] -   stored keys: {list(stored.keys())}")
+        logger.info(f"🐛 DEBUG [update_agent_context] -   stored query: {stored.get('query')}")
+        logger.info(f"🐛 DEBUG [update_agent_context] -   stored entities: {stored.get('entities')}")
+        logger.info(f"🐛 DEBUG [update_agent_context] -   stored entities type: {type(stored.get('entities'))}")
+        
         logger.info(f"Context updated for {agent_name}")
+
 
     def get_agent_context(self, agent_name: str):
         return self.agent_contexts.get(agent_name)
 
+
     def get_all_contexts(self):
-        return self.agent_contexts
+        """
+        Get all agent contexts for context manager searches.
+        Returns list of context dicts with agent_name included.
+        """
+        return [
+            {
+                **context,
+                "agent_name": agent_name
+            }
+            for agent_name, context in self.agent_contexts.items()
+        ]
+
 
     # ===========================
     # CONVERSATION HISTORY
     # ===========================
+
 
     def add_conversation_turn(self, role: str, content: str):
         self.conversation_history.append({
@@ -190,16 +259,20 @@ class MCPBackedDataStore:
             "timestamp": datetime.now().isoformat()
         })
 
+
     # ===========================
     # DYNAMIC DIALOGUE STATE MANAGEMENT
     # ===========================
+
 
     def update_dialogue_state(self, entities: Dict[str, Any], query: str, response: str):
         if not entities:
             logger.debug("No entities to update in dialogue state")
             return
 
+
         timestamp = datetime.now().isoformat()
+
 
         for entity_type, entity_value in entities.items():
             self.dialogue_state['entities'][entity_type] = {
@@ -209,6 +282,7 @@ class MCPBackedDataStore:
             }
             logger.info(f"🔄 Updated entity: {entity_type} = {entity_value}")
 
+
         context_entry = {
             'query': query,
             'response': response[:500] if response else "",
@@ -217,8 +291,10 @@ class MCPBackedDataStore:
             'query_type': self._infer_query_type(query)
         }
 
+
         self.dialogue_state['context_stack'].insert(0, context_entry)
         self.dialogue_state['context_stack'] = self.dialogue_state['context_stack'][:20]
+
 
         query_fingerprint = self._generate_query_fingerprint(query, entities)
         self.dialogue_state['query_results_cache'][query_fingerprint] = {
@@ -227,16 +303,19 @@ class MCPBackedDataStore:
             'timestamp': timestamp
         }
 
+
         logger.info(
             f"💾 Dialogue state updated: {len(entities)} entities, "
             f"stack size: {len(self.dialogue_state['context_stack'])}"
         )
+
 
     def _generate_query_fingerprint(self, query: str, entities: Dict[str, Any]) -> str:
         query_normalized = query.lower().strip()
         entities_str = str(sorted(entities.items()))
         fingerprint_input = f"{query_normalized}|{entities_str}"
         return hashlib.md5(fingerprint_input.encode()).hexdigest()[:16]
+
 
     def _infer_query_type(self, query: str) -> str:
         q = query.lower()
@@ -253,19 +332,24 @@ class MCPBackedDataStore:
         else:
             return 'analysis'
 
+
     # ===========================
     # DIALOGUE STATE QUERIES
     # ===========================
+
 
     def get_entity(self, entity_type: str) -> Optional[Any]:
         info = self.dialogue_state['entities'].get(entity_type)
         return info['value'] if info else None
 
+
     def get_all_active_entities(self) -> Dict[str, Any]:
         return {k: v['value'] for k, v in self.dialogue_state['entities'].items()}
 
+
     def get_context_stack(self) -> List[Dict]:
         return self.dialogue_state['context_stack']
+
 
     def get_similar_contexts(self, query: str, top_k: int = 3) -> List[Dict]:
         query_words = set(query.lower().split())
@@ -278,6 +362,7 @@ class MCPBackedDataStore:
             scored.append((sim, ctx))
         scored.sort(reverse=True, key=lambda x: x[0])
         return [ctx for sim, ctx in scored[:top_k] if sim > 0.3]
+
 
     def get_current_dialogue_state(self) -> Dict[str, Any]:
         return {
@@ -293,6 +378,7 @@ class MCPBackedDataStore:
             ]
         }
 
+
     def clear_dialogue_state(self):
         self.dialogue_state = {
             "entities": {},
@@ -301,9 +387,11 @@ class MCPBackedDataStore:
         }
         logger.info("🧹 Dialogue state cleared")
 
+
     # ===========================
     # UTILITY METHODS
     # ===========================
+
 
     def get_data_summary(self) -> Dict[str, Any]:
         """Generate summary with flexible column detection"""
@@ -364,6 +452,7 @@ class MCPBackedDataStore:
         
         return summary
 
+
     def reset(self):
         self.sales_df = None
         self.enriched_data = {}
@@ -372,6 +461,7 @@ class MCPBackedDataStore:
         self.data_timestamp = None
         self.clear_dialogue_state()
         logger.info("🔄 MCPBackedDataStore reset complete")
+
 
 
 # Singleton

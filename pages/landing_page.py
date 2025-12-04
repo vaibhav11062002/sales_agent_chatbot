@@ -1,4 +1,12 @@
 import streamlit as st
+import logging
+
+# ✅ CRITICAL: Import orchestrator and data connector at module level
+from layer2_orchestrator import AgentOrchestrator
+from data_connector import mcp_store
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # ---------- PAGE CONFIG ----------
 st.set_page_config(
@@ -8,6 +16,24 @@ st.set_page_config(
     initial_sidebar_state="collapsed",
 )
 
+# ✅ INITIALIZE ORCHESTRATOR ONCE AT LANDING PAGE LOAD
+if 'orchestrator' not in st.session_state:
+    logger.info("="*80)
+    logger.info("🚀 LANDING PAGE: INITIALIZING PLATFORM AT STARTUP")
+    logger.info("="*80)
+    
+    with st.spinner("🔄 Initializing AI Platform... Please wait..."):
+        try:
+            # This will: load data → initialize agents → run anomaly detection
+            st.session_state.orchestrator = AgentOrchestrator()
+            st.session_state.platform_initialized = True
+            logger.info("="*80)
+            logger.info("✅ PLATFORM INITIALIZATION COMPLETE")
+            logger.info("="*80)
+        except Exception as e:
+            logger.error(f"❌ Initialization failed: {e}", exc_info=True)
+            st.session_state.platform_initialized = False
+
 # ---------- GLOBAL CSS (runs on every rerun) ----------
 st.markdown(
     """
@@ -15,15 +41,18 @@ st.markdown(
 /* Import Google Fonts */
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
 
+
 /* Global Styles */
 * {
     font-family: 'Inter', sans-serif;
 }
 
+
 .main {
     background: #ffffff;
     padding: 0;
 }
+
 
 .block-container {
     padding-top: 2rem;
@@ -31,10 +60,12 @@ st.markdown(
     max-width: 1400px;
 }
 
+
 /* Hide Streamlit branding */
 #MainMenu {visibility: hidden;}
 footer {visibility: hidden;}
 header {visibility: hidden;}
+
 
 /* Hero Section */
 .hero-section {
@@ -48,6 +79,7 @@ header {visibility: hidden;}
     overflow: hidden;
 }
 
+
 .hero-section::before {
     content: '';
     position: absolute;
@@ -59,10 +91,12 @@ header {visibility: hidden;}
     opacity: 0.4;
 }
 
+
 .hero-content {
     position: relative;
     z-index: 1;
 }
+
 
 .hero-title {
     font-size: 3.5rem;
@@ -71,6 +105,7 @@ header {visibility: hidden;}
     letter-spacing: -0.02em;
     line-height: 1.1;
 }
+
 
 .hero-subtitle {
     font-size: 1.4rem;
@@ -82,6 +117,7 @@ header {visibility: hidden;}
     margin-right: auto;
 }
 
+
 /* Feature Pills */
 .features-row {
     display: flex;
@@ -90,6 +126,7 @@ header {visibility: hidden;}
     flex-wrap: wrap;
     margin-top: 2rem;
 }
+
 
 .feature-pill {
     background: rgba(255, 255, 255, 0.2);
@@ -104,20 +141,24 @@ header {visibility: hidden;}
     transition: all 0.3s ease;
 }
 
+
 .feature-pill:hover {
     background: rgba(255, 255, 255, 0.3);
     transform: translateY(-2px);
 }
 
+
 .feature-icon {
     font-size: 1.5rem;
 }
+
 
 /* Section Header */
 .section-header {
     text-align: center;
     margin: 4rem 0 3rem 0;
 }
+
 
 .section-title {
     font-size: 2.5rem;
@@ -126,11 +167,13 @@ header {visibility: hidden;}
     margin-bottom: 0.5rem;
 }
 
+
 .section-subtitle {
     font-size: 1.1rem;
     color: #64748b;
     font-weight: 400;
 }
+
 
 /* Module Cards */
 .module-card {
@@ -143,11 +186,13 @@ header {visibility: hidden;}
     margin-bottom: 1.5rem;
 }
 
+
 .module-icon {
     font-size: 3rem;
     margin-bottom: 1.5rem;
     display: block;
 }
+
 
 .module-title {
     font-size: 1.5rem;
@@ -156,6 +201,7 @@ header {visibility: hidden;}
     color: #1e293b;
 }
 
+
 .module-description {
     font-size: 0.95rem;
     line-height: 1.6;
@@ -163,6 +209,7 @@ header {visibility: hidden;}
     margin-bottom: 0;
     min-height: 60px;
 }
+
 
 /* Buttons */
 .stButton > button {
@@ -178,15 +225,18 @@ header {visibility: hidden;}
     cursor: pointer;
 }
 
+
 .stButton > button:hover {
     background: #2563eb;
     transform: translateY(-2px);
     box-shadow: 0 10px 20px rgba(59, 130, 246, 0.3);
 }
 
+
 .stButton > button:active {
     transform: translateY(0);
 }
+
 
 /* Footer */
 .footer {
@@ -197,6 +247,7 @@ header {visibility: hidden;}
     color: #64748b;
 }
 
+
 .footer-content {
     display: flex;
     justify-content: center;
@@ -206,11 +257,36 @@ header {visibility: hidden;}
     font-size: 0.95rem;
 }
 
+
 .footer-item {
     display: flex;
     align-items: center;
     gap: 0.5rem;
 }
+
+
+/* Status Badge */
+.status-badge {
+    display: inline-block;
+    padding: 0.5rem 1rem;
+    border-radius: 50px;
+    font-size: 0.85rem;
+    font-weight: 600;
+    margin-top: 1rem;
+}
+
+.status-ready {
+    background: #dcfce7;
+    color: #166534;
+    border: 1px solid #86efac;
+}
+
+.status-loading {
+    background: #fef3c7;
+    color: #92400e;
+    border: 1px solid #fde68a;
+}
+
 
 /* Responsive Design */
 @media (max-width: 768px) {
@@ -230,7 +306,20 @@ header {visibility: hidden;}
 )
 
 
+
 def render_landing_page():
+    # ✅ Show platform status
+    if st.session_state.get('platform_initialized', False):
+        st.markdown(
+            '<div class="status-badge status-ready">✅ AI Platform Ready | All Agents Initialized</div>',
+            unsafe_allow_html=True
+        )
+    else:
+        st.markdown(
+            '<div class="status-badge status-loading">⏳ Platform Initializing...</div>',
+            unsafe_allow_html=True
+        )
+    
     # Hero Section
     st.markdown(
         """
@@ -258,6 +347,7 @@ def render_landing_page():
         unsafe_allow_html=True,
     )
 
+
     # Section Header
     st.markdown(
         """
@@ -269,8 +359,10 @@ def render_landing_page():
         unsafe_allow_html=True,
     )
 
+
     # Row 1
     col1, col2, col3 = st.columns(3, gap="large")
+
 
     with col1:
         st.markdown(
@@ -288,6 +380,7 @@ def render_landing_page():
         if st.button("Launch Module →", key="sales_launch"):
             st.switch_page("pages/layer1_ui.py")
 
+
     with col2:
         st.markdown(
             """
@@ -303,6 +396,7 @@ def render_landing_page():
         )
         if st.button("Launch Module →", key="finance_btn"):
             st.switch_page("pages/layer1_ui.py")
+
 
     with col3:
         st.markdown(
@@ -320,10 +414,13 @@ def render_landing_page():
         if st.button("Launch Module →", key="inventory_btn"):
             st.switch_page("pages/layer1_ui.py")
 
+
     st.markdown("<br>", unsafe_allow_html=True)
+
 
     # Row 2
     col4, col5, col6 = st.columns(3, gap="large")
+
 
     with col4:
         st.markdown(
@@ -341,6 +438,7 @@ def render_landing_page():
         if st.button("Launch Module →", key="hcm_btn"):
             st.switch_page("pages/layer1_ui.py")
 
+
     with col5:
         st.markdown(
             """
@@ -357,6 +455,7 @@ def render_landing_page():
         if st.button("Launch Module →", key="production_btn"):
             st.switch_page("pages/layer1_ui.py")
 
+
     with col6:
         st.markdown(
             """
@@ -372,6 +471,7 @@ def render_landing_page():
         )
         if st.button("Launch Module →", key="maintenance_btn"):
             st.switch_page("pages/layer1_ui.py")
+
 
     # Footer
     st.markdown(
@@ -395,6 +495,7 @@ def render_landing_page():
     """,
         unsafe_allow_html=True,
     )
+
 
 
 if __name__ == "__main__":

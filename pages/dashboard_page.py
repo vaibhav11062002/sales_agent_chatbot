@@ -2,6 +2,7 @@ import streamlit as st
 import os
 from pathlib import Path
 
+
 # ===========================
 # PAGE CONFIGURATION
 # ===========================
@@ -11,23 +12,22 @@ st.set_page_config(
     layout="wide"
 )
 
+
 # ===========================
-# NAVIGATION HELPER
+# SESSION STATE INITIALIZATION
 # ===========================
-def go_back_to_chat():
-    st.session_state.pop('current_dashboard', None)
-    st.session_state.pop('dashboard_html', None)
-    st.session_state['show_chat'] = True
-    st.markdown(
-        """
-        <script>
-            window.parent.location.href = '/';
-        </script>
-        """,
-        unsafe_allow_html=True
-    )
-    st.info("↩️ Redirecting to chat... Click here if not redirected automatically: [Back to Chat](/)")
-    st.stop()
+# Ensure critical session state persists across navigation
+if 'messages' not in st.session_state:
+    st.session_state.messages = []
+
+if 'data_loaded' not in st.session_state:
+    st.session_state.data_loaded = False
+
+if 'current_dashboard' not in st.session_state:
+    st.session_state.current_dashboard = None
+
+if 'dashboard_html' not in st.session_state:
+    st.session_state.dashboard_html = None
 
 
 # ===========================
@@ -38,7 +38,7 @@ if 'dashboard_html' not in st.session_state or not st.session_state.dashboard_ht
     col1, col2 = st.columns([1, 4])
     with col1:
         if st.button("← Back to Chat", use_container_width=True, type="primary"):
-            go_back_to_chat()
+            st.switch_page("pages/layer1_ui.py")
     st.info("💡 **How to create a dashboard:**")
     st.markdown("""
     1. Go back to the chat
@@ -54,14 +54,18 @@ if 'dashboard_html' not in st.session_state or not st.session_state.dashboard_ht
 st.title("📊 Dashboard Viewer")
 st.markdown("---")
 
+
 # ===========================
 # CONTROL PANEL
 # ===========================
 col1, col2, col3, col4 = st.columns([1.2, 1, 1, 2.8])
 
+
 with col1:
     if st.button("← Back to Chat", use_container_width=True, type="primary"):
-        go_back_to_chat()
+        # Simply navigate back - session state persists automatically
+        st.switch_page("pages/layer1_ui.py")
+
 
 with col2:
     if st.session_state.current_dashboard:
@@ -79,8 +83,10 @@ with col2:
         except Exception as e:
             st.error(f"Error reading file: {e}")
 
+
 with col3:
     st.info("📄 PDF (recommended: use the new dashboard PDF button below)")
+
 
 with col4:
     if st.session_state.current_dashboard:
@@ -88,7 +94,9 @@ with col4:
         file_size = os.path.getsize(st.session_state.current_dashboard) / 1024  # KB
         st.caption(f"📂 **{filename}** • {file_size:.1f} KB")
 
+
 st.markdown("---")
+
 
 # ===========================
 # DASHBOARD DISPLAY
@@ -122,6 +130,7 @@ try:
         # Add just after <body> (<div id="dashboard-main"> is already added)
         dashboard_html = dashboard_html.replace('<body>', '<body>' + pdf_button_html)
 
+
     # Display the dashboard HTML
     st.components.v1.html(
         dashboard_html,
@@ -132,7 +141,9 @@ except Exception as e:
     st.error(f"❌ Error displaying dashboard: {str(e)}")
     st.info("💡 Try refreshing the page or creating a new dashboard")
 
+
 st.markdown("---")
+
 
 # Tips and Instructions
 with st.expander("💡 Tips & Shortcuts", expanded=False):
@@ -142,6 +153,7 @@ with st.expander("💡 Tips & Shortcuts", expanded=False):
     - `Ctrl+F` / `Cmd+F` - Search within dashboard
     - `Ctrl+Mouse Wheel` - Zoom in/out
 
+
     **Dashboard Features:**
     - 🖱️ Hover over charts for detailed information
     - 📊 Click and drag on charts to zoom into specific areas
@@ -149,15 +161,18 @@ with st.expander("💡 Tips & Shortcuts", expanded=False):
     - 📄 Use the new 'Save as PDF' button in the dashboard for instant PDF exports
     - 🔄 Create new dashboards by asking in the chat
 
+
     **PDF Generation:**
     - Uses client-side PDF export (button in dashboard)
     - Fallback: Use browser's print function (Ctrl+P) for PDF
+
 
     **Troubleshooting:**
     - If dashboard doesn't load, go back to chat and try again
     - For PDF issues, use browser's print function as alternative
     - Clear browser cache if charts don't appear correctly
     """)
+
 
 # Metadata footer
 col_left, col_right = st.columns([3, 1])
@@ -167,11 +182,19 @@ with col_right:
     if st.button("🔄 Refresh", use_container_width=True, help="Reload dashboard"):
         st.rerun()
 
+
 # ===========================
 # SIDEBAR - Dashboard History
 # ===========================
 with st.sidebar:
     st.header("📊 Dashboard History")
+    
+    # Back to Chat button in sidebar
+    if st.button("🔙 Back to Chat", key="sidebar_back", use_container_width=True, type="primary"):
+        st.switch_page("pages/layer1_ui.py")
+    
+    st.markdown("---")
+    
     if os.path.exists('dashboards'):
         dashboards = sorted(
             [f for f in os.listdir('dashboards') if f.endswith('.html')],
@@ -214,17 +237,22 @@ with st.sidebar:
     else:
         st.info("No dashboards yet. Create one in the chat!")
 
+
     st.markdown("---")
     st.header("⚡ Quick Actions")
 
-    if st.button("🆕 Create New Dashboard", use_container_width=True, type="primary"):
-        go_back_to_chat()
+
+    if st.button("🆕 Create New Dashboard", use_container_width=True, type="secondary"):
+        st.switch_page("pages/layer1_ui.py")
+
 
     if st.button("📂 Open Dashboards Folder", use_container_width=True):
         import subprocess
         import platform
 
+
         dashboards_path = os.path.abspath('dashboards')
+
 
         try:
             if platform.system() == 'Windows':
@@ -237,6 +265,7 @@ with st.sidebar:
         except Exception as e:
             st.error(f"❌ Could not open folder: {e}")
             st.info(f"📂 Path: {dashboards_path}")
+
 
     if st.button("🧹 Clear All Dashboards", use_container_width=True):
         if os.path.exists('dashboards'):
@@ -255,6 +284,7 @@ with st.sidebar:
                 st.info("No dashboards to delete")
         else:
             st.info("No dashboards folder found")
+
 
 # ===========================
 # CUSTOM CSS
