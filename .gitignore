@@ -9,3 +9,5 @@ requirements.txt
 README.md
 pages/__pycache__/*
 config.py
+test2.py
+test_mcp.py
