@@ -48,11 +48,11 @@ class AgentOrchestrator:
         self._ensure_data_loaded()
         
         # ✅ STEP 2: Import and initialize all specialized agents
-        from layer3_agents.analysis_agent import AnalysisAgent
-        from layer3_agents.forecasting_agent import ForecastingAgent
-        from layer3_agents.anomaly_detection_agent import AnomalyDetectionAgent
-        from layer3_agents.explanation_agent import ExplanationAgent
-        from layer3_agents.dashboard_agent import DashboardAgent
+        from layer3_agents.Analysis_Agent.analysis_agent import AnalysisAgent
+        from layer3_agents.Predictive_Agent.forecasting_agent import ForecastingAgent
+        from layer3_agents.Predictive_Agent.anomaly_detection_agent import AnomalyDetectionAgent
+        from layer3_agents.Analysis_Agent.explanation_agent import ExplanationAgent
+        from layer3_agents.Analysis_Agent.dashboard_agent import DashboardAgent
         
         logger.info("📦 Initializing agents...")
         self.analysis_agent = AnalysisAgent()
